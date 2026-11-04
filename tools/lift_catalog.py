@@ -1038,6 +1038,203 @@ class InstructionLifter:
             cond = CC[m[4:]]
             return [f"if ({cond}) {{ {W(0, E(1))} }}"]
 
+        if m in ("clc", "stc"):
+            cf_val = "0u" if m == "clc" else "1u"
+            cf_reg = "RG_(cf)" if self.use_rg else "c->cf"
+            return [f"{cf_reg} = {cf_val};"]
+
+        if m in ("cld", "std"):
+            df_val = "0u" if m == "cld" else "1u"
+            return [f"c->df = {df_val};"]
+
+        if m in ("pushfd", "pushf"):
+            if self.use_rg:
+                return ["LR_STORE;", "PUSH32(eflags_get(c));"]
+            return ["PUSH32(eflags_get(c));"]
+
+        if m in ("popfd", "popf"):
+            if self.use_rg:
+                return ["{ uint32_t _f; POP32(_f); eflags_set(c, _f); }", "LR_RELOAD;"]
+            return ["{ uint32_t _f; POP32(_f); eflags_set(c, _f); }"]
+
+        if m == "xchg" and len(o) == 2:
+            st0 = f"int{bits}_t" if bits < 32 else "uint32_t"
+            return [f"{{ {st0} _t0 = ({E(0)}), _t1 = ({E(1)}); {W(0, '_t1')} {W(1, '_t0')} }}"]
+
+        # Rotations
+        if m in ("rol", "ror"):
+            cnt = E(1) if len(o) > 1 else "1u"
+            mask = 0xFFFFFFFF if bits == 32 else (0xFFFF if bits == 16 else 0xFF)
+            cf = self._reg_name("cf")
+            of = self._reg_name("of")
+            if m == "rol":
+                return [
+                    f"{{ uint32_t _c = ({cnt}) & 31u; if (_c) {{ "
+                    f"uint32_t _v = ({E(0)}) & 0x{mask:x}u; "
+                    f"uint32_t _s = _c % {bits}u; "
+                    f"uint32_t _r = _s ? (((_v << _s) | (_v >> ({bits}u - _s))) & 0x{mask:x}u) : _v; "
+                    f"{cf} = _r & 1u; "
+                    f"if (_c == 1u) {of} = ((_r >> ({bits-1}u)) & 1u) ^ (_r & 1u); "
+                    f"{W(0, '_r')} }} }}"
+                ]
+            else:  # ror
+                return [
+                    f"{{ uint32_t _c = ({cnt}) & 31u; if (_c) {{ "
+                    f"uint32_t _v = ({E(0)}) & 0x{mask:x}u; "
+                    f"uint32_t _s = _c % {bits}u; "
+                    f"uint32_t _r = _s ? (((_v >> _s) | (_v << ({bits}u - _s))) & 0x{mask:x}u) : _v; "
+                    f"{cf} = (_r >> ({bits-1}u)) & 1u; "
+                    f"if (_c == 1u) {of} = ((_r >> ({bits-1}u)) & 1u) ^ ((_r >> ({bits-2 if bits > 1 else 0}u)) & 1u); "
+                    f"{W(0, '_r')} }} }}"
+                ]
+
+        # LAHF / SAHF
+        if m == "lahf":
+            cf = self._reg_name("cf")
+            pf = self._reg_name("pf")
+            af = self._reg_name("af")
+            zf = self._reg_name("zf")
+            sf = self._reg_name("sf")
+            eax = self._reg_name("eax")
+            return [
+                f"{eax} = ({eax} & 0xffff00ffu) | "
+                f"((({sf} & 1u) << 15) | (({zf} & 1u) << 14) | (({af} & 1u) << 12) | "
+                f"(({pf} & 1u) << 10) | (1u << 9) | (({cf} & 1u) << 8));"
+            ]
+
+        if m == "sahf":
+            cf = self._reg_name("cf")
+            pf = self._reg_name("pf")
+            af = self._reg_name("af")
+            zf = self._reg_name("zf")
+            sf = self._reg_name("sf")
+            eax = self._reg_name("eax")
+            return [
+                f"{{ uint32_t _ah = ({eax} >> 8) & 0xffu; "
+                f"{cf} = _ah & 1u; {pf} = (_ah >> 2) & 1u; {af} = (_ah >> 4) & 1u; "
+                f"{zf} = (_ah >> 6) & 1u; {sf} = (_ah >> 7) & 1u; }}"
+            ]
+
+        # Integer division
+        if m in ("idiv", "div"):
+            eax = self._reg_name("eax")
+            edx = self._reg_name("edx")
+            if m == "idiv":
+                if bits == 32:
+                    return [
+                        f"{{ int32_t _den = (int32_t)({E(0)}); if (_den != 0) {{ "
+                        f"int64_t _num = (int64_t)(((uint64_t){edx} << 32) | (uint64_t)(uint32_t){eax}); "
+                        f"if (!(_num == (-9223372036854775807LL - 1LL) && _den == -1)) {{ "
+                        f"int64_t _q = _num / _den; int64_t _rem = _num % _den; "
+                        f"if (_q >= -2147483648LL && _q <= 2147483647LL) {{ "
+                        f"{eax} = (uint32_t)(int32_t)_q; {edx} = (uint32_t)(int32_t)_rem; "
+                        f"}} }} }} }}"
+                    ]
+                elif bits == 16:
+                    return [
+                        f"{{ int16_t _den = (int16_t)({E(0)}); if (_den != 0) {{ "
+                        f"int32_t _num = (int32_t)((((uint32_t)(uint16_t){edx}) << 16) | (uint16_t){eax}); "
+                        f"int32_t _q = _num / _den; int32_t _rem = _num % _den; "
+                        f"if (_q >= -32768 && _q <= 32767) {{ "
+                        f"{eax} = ({eax} & 0xffff0000u) | ((uint32_t)(int16_t)_q & 0xffffu); "
+                        f"{edx} = ({edx} & 0xffff0000u) | ((uint32_t)(int16_t)_rem & 0xffffu); "
+                        f"}} }} }}"
+                    ]
+                else:  # 8-bit
+                    return [
+                        f"{{ int8_t _den = (int8_t)({E(0)}); if (_den != 0) {{ "
+                        f"int16_t _num = (int16_t){eax}; "
+                        f"int32_t _q = _num / _den; int32_t _rem = _num % _den; "
+                        f"if (_q >= -128 && _q <= 127) {{ "
+                        f"{eax} = ({eax} & 0xffff0000u) | ((uint32_t)(_q & 0xffu)) | (((uint32_t)(_rem & 0xffu)) << 8); "
+                        f"}} }} }}"
+                    ]
+            else:  # unsigned div
+                if bits == 32:
+                    return [
+                        f"{{ uint32_t _den = (uint32_t)({E(0)}); if (_den != 0) {{ "
+                        f"uint64_t _num = ((uint64_t){edx} << 32) | (uint32_t){eax}; "
+                        f"uint64_t _q = _num / _den; uint32_t _rem = (uint32_t)(_num % _den); "
+                        f"if (_q <= 0xffffffffULL) {{ {eax} = (uint32_t)_q; {edx} = _rem; }} }} }}"
+                    ]
+                elif bits == 16:
+                    return [
+                        f"{{ uint16_t _den = (uint16_t)({E(0)}); if (_den != 0) {{ "
+                        f"uint32_t _num = (((uint32_t)(uint16_t){edx}) << 16) | (uint16_t){eax}; "
+                        f"uint32_t _q = _num / _den; uint32_t _rem = _num % _den; "
+                        f"if (_q <= 0xffffu) {{ "
+                        f"{eax} = ({eax} & 0xffff0000u) | (_q & 0xffffu); "
+                        f"{edx} = ({edx} & 0xffff0000u) | (_rem & 0xffffu); }} }} }}"
+                    ]
+                else:  # 8-bit
+                    return [
+                        f"{{ uint8_t _den = (uint8_t)({E(0)}); if (_den != 0) {{ "
+                        f"uint16_t _num = (uint16_t){eax}; "
+                        f"uint16_t _q = _num / _den; uint16_t _rem = _num % _den; "
+                        f"if (_q <= 0xffu) {{ "
+                        f"{eax} = ({eax} & 0xffff0000u) | (_q & 0xffu) | ((_rem & 0xffu) << 8); }} }} }}"
+                    ]
+
+        # String instructions (movsd/movsb, stosd/stosb, cmpsb/cmpsd)
+        base_m = m.split()[-1]
+        is_rep = m.startswith("rep ") or m.startswith("repe ") or m.startswith("repz ")
+        if base_m in ("movsd", "movsb", "stosd", "stosb", "cmpsb", "cmpsd"):
+            # Ensure not SSE scalar
+            if o and any(op.type == 1 and op.reg in XM for op in o):
+                pass
+            else:
+                esi = self._reg_name("esi")
+                edi = self._reg_name("edi")
+                ecx = self._reg_name("ecx")
+                eax = self._reg_name("eax")
+                step = 4 if base_m.endswith("d") else 1
+                MR_OP = "MR32" if step == 4 else "MR8"
+
+                if base_m.startswith("movs"):
+                    if is_rep:
+                        return [
+                            f"if (c->df) {{ while ({ecx} > 0) {{ {MR_OP}({edi}) = {MR_OP}({esi}); {esi} -= {step}u; {edi} -= {step}u; {ecx}--; }} }} "
+                            f"else {{ while ({ecx} > 0) {{ {MR_OP}({edi}) = {MR_OP}({esi}); {esi} += {step}u; {edi} += {step}u; {ecx}--; }} }}"
+                        ]
+                    else:
+                        return [
+                            f"{MR_OP}({edi}) = {MR_OP}({esi}); "
+                            f"if (c->df) {{ {esi} -= {step}u; {edi} -= {step}u; }} else {{ {esi} += {step}u; {edi} += {step}u; }}"
+                        ]
+
+                if base_m.startswith("stos"):
+                    val = eax if step == 4 else f"({eax} & 0xffu)"
+                    if is_rep:
+                        return [
+                            f"if (c->df) {{ while ({ecx} > 0) {{ {MR_OP}({edi}) = {val}; {edi} -= {step}u; {ecx}--; }} }} "
+                            f"else {{ while ({ecx} > 0) {{ {MR_OP}({edi}) = {val}; {edi} += {step}u; {ecx}--; }} }}"
+                        ]
+                    else:
+                        return [
+                            f"{MR_OP}({edi}) = {val}; "
+                            f"if (c->df) {{ {edi} -= {step}u; }} else {{ {edi} += {step}u; }}"
+                        ]
+
+                if base_m.startswith("cmps"):
+                    bits_cmp = 32 if step == 4 else 8
+                    mask_cmp = 0xffffffff if step == 4 else 0xff
+                    if is_rep:
+                        return [
+                            f"while ({ecx} > 0) {{ "
+                            f"uint32_t _a = (uint32_t){MR_OP}({esi}), _b = (uint32_t){MR_OP}({edi}); "
+                            f"uint32_t _r = (_a - _b) & 0x{mask_cmp:x}u; "
+                            f"FLAGS_SUB_M(_a, _b, _r, {bits_cmp}, 0x3fu); "
+                            f"if (c->df) {{ {esi} -= {step}u; {edi} -= {step}u; }} else {{ {esi} += {step}u; {edi} += {step}u; }} "
+                            f"{ecx}--; if (_a != _b) break; }}"
+                        ]
+                    else:
+                        return [
+                            f"{{ uint32_t _a = (uint32_t){MR_OP}({esi}), _b = (uint32_t){MR_OP}({edi}); "
+                            f"uint32_t _r = (_a - _b) & 0x{mask_cmp:x}u; "
+                            f"FLAGS_SUB_M(_a, _b, _r, {bits_cmp}, 0x3fu); "
+                            f"if (c->df) {{ {esi} -= {step}u; {edi} -= {step}u; }} else {{ {esi} += {step}u; {edi} += {step}u; }} }}"
+                        ]
+
         raise UnsupportedInstruction(f"Unsupported mnemonic: {m} ({ins.op_str})")
 
 
@@ -1108,6 +1305,147 @@ class FunctionLifter:
         if off < 0 or off + size > len(self.raw_exe):
             return b""
         return self.raw_exe[off : off + size]
+
+    def resolve_intra_splices(
+        self, func_entry: int, initial_blocks: list[Any]
+    ) -> list[Any]:
+        """Recovers intra-function SecuROM splices and continuation blocks (Rule A).
+
+        Detects when a function's prologue/entry block jumps to an intra-function
+        SecuROM obfuscation splice whose terminal jump returns directly to the
+        function body (return_dest == b_end). When confirmed:
+        1. Inlines the splice basic block into the function's CFG.
+        2. If the return_dest was truncated from the catalog, discovers the
+           continuation body blocks until genuine terminal exits (ret/retf).
+        """
+        blocks = [list(b) for b in initial_blocks]
+        if not blocks:
+            return blocks
+
+        block_starts = {b[0] for b in blocks}
+
+        b_start, b_end, succs, is_exit = blocks[0]
+        code = self.read_bytes(b_start, b_end - b_start)
+        insns = list(self.cs.disasm(code, b_start))
+        if not insns or insns[-1].mnemonic != "jmp":
+            return blocks
+
+        last_ins = insns[-1]
+        if not last_ins.operands or last_ins.operands[0].type != CS_OP_IMM:
+            return blocks
+
+        splice_va = last_ins.operands[0].imm
+        if splice_va in block_starts:
+            return blocks
+
+        splice_code = self.read_bytes(splice_va, 64)
+        if not splice_code:
+            return blocks
+
+        s_insns = list(self.cs.disasm(splice_code, splice_va))
+        splice_block_insns = []
+        ret_dest = None
+        for s in s_insns:
+            splice_block_insns.append(s)
+            if s.mnemonic == "jmp" and s.operands and s.operands[0].type == CS_OP_IMM:
+                ret_dest = s.operands[0].imm
+                break
+            if s.mnemonic in ("ret", "retf", "call"):
+                break
+            if len(splice_block_insns) >= 32:
+                break
+
+        if ret_dest is None or ret_dest != b_end:
+            return blocks
+
+        splice_end = splice_block_insns[-1].address + splice_block_insns[-1].size
+        blocks.append([splice_va, splice_end, [ret_dest], 0])
+        block_starts.add(splice_va)
+
+        if ret_dest not in block_starts:
+            leaders = {ret_dest}
+            raw_blocks = {}
+            q = [ret_dest]
+            other_funcs = set(self.functions.keys()) - {func_entry}
+
+            while q:
+                curr = q.pop(0)
+                if curr in raw_blocks:
+                    continue
+                curr_va = curr
+                curr_insns = []
+                while True:
+                    c_bytes = self.read_bytes(curr_va, 16)
+                    if not c_bytes:
+                        break
+                    try:
+                        ins = next(self.cs.disasm(c_bytes, curr_va))
+                    except StopIteration:
+                        break
+                    curr_insns.append(ins)
+                    m = ins.mnemonic
+                    if m in ("ret", "retf"):
+                        curr_va += ins.size
+                        break
+                    if m == "jmp":
+                        if ins.operands and ins.operands[0].type == CS_OP_IMM:
+                            t = ins.operands[0].imm
+                            if t not in other_funcs and t not in leaders:
+                                leaders.add(t)
+                                q.append(t)
+                        curr_va += ins.size
+                        break
+                    if (m.startswith("j") and m != "jmp") or m in (
+                        "jecxz",
+                        "jcxz",
+                        "loop",
+                        "loope",
+                        "loopne",
+                    ):
+                        if ins.operands and ins.operands[0].type == CS_OP_IMM:
+                            t = ins.operands[0].imm
+                            ft = ins.address + ins.size
+                            for dest in (t, ft):
+                                if dest not in other_funcs and dest not in leaders:
+                                    leaders.add(dest)
+                                    q.append(dest)
+                        curr_va += ins.size
+                        break
+                    curr_va += ins.size
+                raw_blocks[curr] = (curr_insns, curr_va)
+
+            all_insns = []
+            for start_addr in sorted(raw_blocks.keys()):
+                all_insns.extend(raw_blocks[start_addr][0])
+            seen_addr = set()
+            unique_insns = []
+            for ins in all_insns:
+                if ins.address not in seen_addr:
+                    seen_addr.add(ins.address)
+                    unique_insns.append(ins)
+            unique_insns.sort(key=lambda x: x.address)
+
+            cur_b_insns = []
+            for ins in unique_insns:
+                if (
+                    ins.address in leaders
+                    and cur_b_insns
+                    and ins.address != cur_b_insns[0].address
+                ):
+                    b_s = cur_b_insns[0].address
+                    b_e = cur_b_insns[-1].address + cur_b_insns[-1].size
+                    is_ex = 1 if cur_b_insns[-1].mnemonic in ("ret", "retf") else 0
+                    blocks.append([b_s, b_e, [], is_ex])
+                    cur_b_insns = [ins]
+                else:
+                    cur_b_insns.append(ins)
+            if cur_b_insns:
+                b_s = cur_b_insns[0].address
+                b_e = cur_b_insns[-1].address + cur_b_insns[-1].size
+                is_ex = 1 if cur_b_insns[-1].mnemonic in ("ret", "retf") else 0
+                blocks.append([b_s, b_e, [], is_ex])
+
+        return blocks
 
     def lift_function(
         self,
@@ -1257,7 +1595,7 @@ class FunctionLifter:
         if enable_lregs:
             lines.append("    LR_ENTER;")
 
-        blocks = func["blocks"]
+        blocks = self.resolve_intra_splices(func_entry, func["blocks"])
         block_starts = {b[0] for b in blocks}
 
         # Disassemble all blocks for CFG dataflow analysis

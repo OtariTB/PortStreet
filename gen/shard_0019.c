@@ -49026,7 +49026,9 @@ L_00828460:
     { uint32_t _a = RG_(ecx), _b = MR32(0xa8be00u), _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x08u); }
     if (CC_NE) goto L_0082846a;
 L_00828468:
-    /* Unsupported: repz ret  (Unsupported mnemonic: repz ret ()) */
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
 L_0082846a:
     goto L_00828da4;
 L_00828da4:

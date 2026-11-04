@@ -35,8 +35,8 @@ console.log('=== Test Suite: Genuine WebAssembly SEH Prolog / Epilog & RET Stack
 // Initialize fntab
 exp.fntab_init();
 
-// Setup guest CPU structure at 0x02000000
-const CPU_VA = 0x02000000;
+// Setup guest CPU structure at 0x00104000
+const CPU_VA = 0x00104000;
 for (let i = 0; i < 512; i++) mem[CPU_VA + i] = 0;
 
 function setEsp(val) { dv.setUint32(CPU_VA + 16, val, true); }

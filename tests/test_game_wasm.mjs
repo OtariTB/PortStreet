@@ -114,8 +114,9 @@ async function run() {
     instance.exports.boot_bind_iats();
     instance.exports.boot_install_hooks();
 
-    // Allocate guest CPU structure in guest heap (0x02000000)
-    const CPU_STRUCT_VA = 0x02000000;
+    // Allocate guest CPU structure in reserved TEB/TLS page (0x00104000)
+    // Non-overlapping with guest dynamic heap (0x02000000..0x28000000)
+    const CPU_STRUCT_VA = 0x00104000;
     // Zero out CPU struct
     for (let i = 0; i < 512; i++) wasmMem[CPU_STRUCT_VA + i] = 0;
     // Set CPU fields:
@@ -154,7 +155,14 @@ async function run() {
                     const obj_count = dv.getUint32(0x00ab47e4, true);
                     const arr_ptr = dv.getUint32(0x00ab47e0 + 0x16c, true);
                     const ctor_count = arr_ptr !== 0 ? dv.getUint32(arr_ptr - 4, true) : 0;
-                    fs.writeSync(1, `      [PASS] Constructor #169 completed! Descriptor count=[0xab47e4]=${obj_count}, Element array=[0xab494c]=0x${arr_ptr.toString(16)} (header count=${ctor_count}, size=${obj_count * 12 + 4} bytes) [${t_ctor_elapsed}ms]\n`);
+                    const low_10c = dv.getUint8(0x10c);
+                    const low_110 = dv.getUint32(0x110, true);
+                    if (obj_count === 87 && arr_ptr >= 0x02000000 && arr_ptr < 0x28000000 && ctor_count === 87 && low_10c === 0 && low_110 === 0) {
+                        fs.writeSync(1, `      [PASS] Constructor #169 completed! Descriptor count=[0xab47e4]=${obj_count}, Element array=[0xab494c]=0x${arr_ptr.toString(16)} (header count=${ctor_count}, size=${obj_count * 12 + 4} bytes), null-guard clean [${t_ctor_elapsed}ms]\n`);
+                    } else {
+                        fs.writeSync(1, `      [FAIL] Constructor #169 invalid state! count=${obj_count}, arr=0x${arr_ptr.toString(16)}, header=${ctor_count}, low_10c=${low_10c}, low_110=0x${low_110.toString(16)}\n`);
+                        process.exit(1);
+                    }
                 } else if (count > 169) {
                     fs.writeSync(1, `      <- [DONE]  Constructor #${count} (0x${fn_va.toString(16)}) [${t_ctor_elapsed}ms]\n`);
                 }
@@ -165,6 +173,19 @@ async function run() {
     } catch (err) {
         console.error(`[FAIL] Constructor #${current_ctor} (0x${current_fn.toString(16)}) trapped:`, err);
         dumpCPU(dv, CPU_STRUCT_VA);
+        console.log('\n--- bChunk Pool Object State (0x00abb060) ---');
+        const bchunk = 0x00abb060;
+        console.log(`init_flag (+0x10c): ${dv.getUint8(bchunk + 0x10c)}`);
+        console.log(`field_+0x100:      0x${dv.getUint32(bchunk + 0x100, true).toString(16)}`);
+        console.log(`field_+0x104:      0x${dv.getUint32(bchunk + 0x104, true).toString(16)}`);
+        console.log(`field_+0x108:      0x${dv.getUint32(bchunk + 0x108, true).toString(16)}`);
+        console.log(`fastmem_ptr (+0x110): 0x${dv.getUint32(bchunk + 0x110, true).toString(16)}`);
+        console.log(`fastmem_sz (+0x114):  0x${dv.getUint32(bchunk + 0x114, true).toString(16)}`);
+        console.log(`fastmem_off (+0x118): 0x${dv.getUint32(bchunk + 0x118, true).toString(16)}`);
+        console.log('First 8 buckets:');
+        for (let b = 0; b < 8; b++) {
+            console.log(`  bucket[${b}]: 0x${dv.getUint32(bchunk + b * 4, true).toString(16)}`);
+        }
         process.exit(1);
     }
 
@@ -181,6 +202,70 @@ async function run() {
         console.log('Trap / Error:', err.message);
         dumpCPU(dv, CPU_STRUCT_VA);
         console.log('============================================================');
+    }
+
+    // D3D9 Ring Buffer Inspection
+    const D3D9_RING_BUFFER_VA = 0x02010000;
+    const ringMagic = dv.getUint32(D3D9_RING_BUFFER_VA, true);
+    const ringVer = dv.getUint32(D3D9_RING_BUFFER_VA + 4, true);
+    const ringHead = dv.getUint32(D3D9_RING_BUFFER_VA + 8, true);
+    const ringTail = dv.getUint32(D3D9_RING_BUFFER_VA + 12, true);
+    const ringCap = dv.getUint32(D3D9_RING_BUFFER_VA + 16, true);
+    const frameIndex = dv.getUint32(D3D9_RING_BUFFER_VA + 20, true);
+
+    console.log('\n=== DIRECT3D 9 SHARED MEMORY RING BUFFER STATE ===');
+    console.log(`Magic: 0x${ringMagic.toString(16)} (expected 0x39443344 'D3D9')`);
+    console.log(`Version: ${ringVer}`);
+    console.log(`Head offset: ${ringHead} bytes`);
+    console.log(`Tail offset: ${ringTail} bytes`);
+    console.log(`Frame index: ${frameIndex}`);
+
+    const CMD_NAMES = {
+        0: 'NOP',
+        1: 'CLEAR',
+        2: 'BEGIN_SCENE',
+        3: 'END_SCENE',
+        4: 'PRESENT',
+        5: 'SET_RENDER_STATE',
+        6: 'SET_SAMPLER_STATE',
+        7: 'SET_TEXTURE',
+        8: 'SET_TRANSFORM',
+        9: 'SET_VIEWPORT',
+        10: 'SET_STREAM_SOURCE',
+        11: 'SET_INDICES',
+        12: 'DRAW_PRIMITIVE',
+        13: 'DRAW_INDEXED_PRIMITIVE'
+    };
+
+    if (ringHead > 0) {
+        console.log(`Serialized Command Packets (${ringHead} bytes written):`);
+        let offset = 0;
+        let pidx = 0;
+        while (offset < ringHead && pidx < 50) {
+            const pva = D3D9_RING_BUFFER_VA + 64 + offset;
+            const cmdType = dv.getUint16(pva, true);
+            const flags = dv.getUint16(pva + 2, true);
+            const payloadBytes = dv.getUint32(pva + 4, true);
+            const cname = CMD_NAMES[cmdType] || `UNKNOWN_CMD_${cmdType}`;
+            console.log(`  [Packet #${pidx}] Type=${cmdType} (${cname}), Flags=0x${flags.toString(16)}, Payload=${payloadBytes} bytes`);
+            offset += 8 + payloadBytes;
+            pidx++;
+        }
+    } else {
+        console.log('No commands written to ring buffer (head = 0).');
+    }
+
+    // Inspect Constructor #169 object state
+    const ctor169Obj = 0x00ab47e0;
+    const c169Count = dv.getUint32(ctor169Obj + 4, true);
+    const c169Arr = dv.getUint32(ctor169Obj + 0x16c, true);
+    console.log('\n=== CONSTRUCTOR #169 STATE ===');
+    console.log(`Object 0x${ctor169Obj.toString(16)}: descriptor count=${c169Count}, element_array=0x${c169Arr.toString(16)}`);
+    if (c169Arr >= 0x02000000 && c169Arr < 0x28000000) {
+        const allocHeader = dv.getUint32(c169Arr - 4, true);
+        console.log(`Element array resides in dynamic heap! Heap alloc header count=${allocHeader}`);
+    } else {
+        console.log(`WARNING: Element array pointer 0x${c169Arr.toString(16)} is not in heap range!`);
     }
 }
 

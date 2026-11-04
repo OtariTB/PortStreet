@@ -24,7 +24,7 @@ inst.exports.boot_install_hooks();
 
 const wasmMem = new Uint8Array(inst.exports.memory.buffer);
 const dv = new DataView(inst.exports.memory.buffer);
-const CPU_STRUCT_VA = 0x02000000;
+const CPU_STRUCT_VA = 0x00104000;
 
 function resetCPU() {
     for (let i = 0; i < 512; i++) wasmMem[CPU_STRUCT_VA + i] = 0;

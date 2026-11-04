@@ -47,7 +47,7 @@ dv.setUint32(TEB + 0x100, TEB + 0x200, true);
 inst.exports.boot_bind_iats();
 inst.exports.boot_install_hooks();
 
-const CPU_STRUCT_VA = 0x02000000;
+const CPU_STRUCT_VA = 0x00104000;
 for (let i = 0; i < 512; i++) wasmMem[CPU_STRUCT_VA + i] = 0;
 dv.setUint32(CPU_STRUCT_VA + 16, 0x003ff000, true);
 dv.setUint32(CPU_STRUCT_VA + 32, 0x004afee0, true);

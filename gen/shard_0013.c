@@ -3,6 +3,7 @@
  */
 #define PROSTREET_LREGS 1
 #include "gen/fntab.h"
+#include <stdio.h>
 
 void sub_006a68f0(CPU *c) {
     LR_ENTER;
@@ -61637,6 +61638,8 @@ L_006dbb9e:
     LR_STORE;
     sub_006dae50(c);
     LR_RELOAD;
+    printf("[FRAME 1] sub_006dae50 (authentic frame tick) returned! Requesting engine quit...\n"); fflush(stdout);
+    MR32(0xabae68u) = 1u;
     { uint32_t _a = RG_(esp), _b = 0x4u, _r = _a + _b; FLAGS_ADD_M(_a, _b, _r, 32, 0x00u); RG_(esp) = (uint32_t)(_r); }
     { uint32_t _a = MR8(0xabaed5u), _b = 0x0u, _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 8, 0x08u); }
     if (CC_E) goto L_006dbbc6;

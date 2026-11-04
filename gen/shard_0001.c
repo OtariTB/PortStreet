@@ -7637,7 +7637,20 @@ L_004353ec:
     { uint32_t _r = (RG_(edx)) & (MR32(RG_(esp)+0x18u)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(edx) = (uint32_t)(_r); }
     { uint32_t _a = RG_(eax), _b = RG_(edx), _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x00u); RG_(eax) = (uint32_t)(_r); }
     RG_(edx) = (uint32_t)((int32_t)RG_(eax) >> 31);
-    /* Unsupported: idiv dword ptr [ebp + 0xc] (Unsupported mnemonic: idiv (dword ptr [ebp + 0xc])) */
+    {
+        int32_t _den = (int32_t)(MR32(RG_(ebp)+0xcu));
+        if (_den != 0) {
+            int64_t _num = (int64_t)(((uint64_t)RG_(edx) << 32) | (uint64_t)(uint32_t)RG_(eax));
+            if (!(_num == (-9223372036854775807LL - 1LL) && _den == -1)) {
+                int64_t _q = _num / _den;
+                int64_t _rem = _num % _den;
+                if (_q >= -2147483648LL && _q <= 2147483647LL) {
+                    RG_(eax) = (uint32_t)(int32_t)_q;
+                    RG_(edx) = (uint32_t)(int32_t)_rem;
+                }
+            }
+        }
+    }
     RG_(eax) = (uint32_t)(MR32(RG_(esi)+0x8u));
     { uint32_t _a = RG_(eax), _b = RG_(edx), _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x00u); RG_(eax) = (uint32_t)(_r); }
     { uint32_t _a = RG_(eax), _b = RG_(ebx), _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x08u); RG_(eax) = (uint32_t)(_r); }
@@ -7678,7 +7691,20 @@ L_00435440:
     RG_(edx) = (uint32_t)((RG_(esi)+0xffffffffu));
     { uint32_t _r = (RG_(eax)) & (RG_(edx)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(eax) = (uint32_t)(_r); }
     RG_(edx) = (uint32_t)((int32_t)RG_(eax) >> 31);
-    /* Unsupported: idiv esi (Unsupported mnemonic: idiv (esi)) */
+    {
+        int32_t _den = (int32_t)(RG_(esi));
+        if (_den != 0) {
+            int64_t _num = (int64_t)(((uint64_t)RG_(edx) << 32) | (uint64_t)(uint32_t)RG_(eax));
+            if (!(_num == (-9223372036854775807LL - 1LL) && _den == -1)) {
+                int64_t _q = _num / _den;
+                int64_t _rem = _num % _den;
+                if (_q >= -2147483648LL && _q <= 2147483647LL) {
+                    RG_(eax) = (uint32_t)(int32_t)_q;
+                    RG_(edx) = (uint32_t)(int32_t)_rem;
+                }
+            }
+        }
+    }
     { uint32_t _a = RG_(ecx), _b = RG_(edx), _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x00u); RG_(ecx) = (uint32_t)(_r); }
     { uint32_t _a = RG_(ecx), _b = RG_(ebx), _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x08u); RG_(ecx) = (uint32_t)(_r); }
     RG_(eax) = (uint32_t)(RG_(ecx));
@@ -7927,7 +7953,20 @@ L_00435440:
     { uint32_t _r = (RG_(eax)) & (RG_(edx)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(eax) = (uint32_t)(_r); }
     RG_(edx) = (uint32_t)((int32_t)RG_(eax) >> 31);
 L_00435455:
-    /* Unsupported: idiv esi (Unsupported mnemonic: idiv (esi)) */
+    {
+        int32_t _den = (int32_t)(RG_(esi));
+        if (_den != 0) {
+            int64_t _num = (int64_t)(((uint64_t)RG_(edx) << 32) | (uint64_t)(uint32_t)RG_(eax));
+            if (!(_num == (-9223372036854775807LL - 1LL) && _den == -1)) {
+                int64_t _q = _num / _den;
+                int64_t _rem = _num % _den;
+                if (_q >= -2147483648LL && _q <= 2147483647LL) {
+                    RG_(eax) = (uint32_t)(int32_t)_q;
+                    RG_(edx) = (uint32_t)(int32_t)_rem;
+                }
+            }
+        }
+    }
     { uint32_t _a = RG_(ecx), _b = RG_(edx), _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x00u); RG_(ecx) = (uint32_t)(_r); }
     { uint32_t _a = RG_(ecx), _b = RG_(ebx), _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x08u); RG_(ecx) = (uint32_t)(_r); }
     RG_(eax) = (uint32_t)(RG_(ecx));
@@ -8780,7 +8819,12 @@ L_00435f93:
 L_00435f9d:
     RG_(eax) = (uint32_t)(MR32(0xbfbcd8u));
     RG_(edx) = (uint32_t)((int32_t)RG_(eax) >> 31);
-    /* Unsupported: idiv ecx (Unsupported mnemonic: idiv (ecx)) */
+    if ((int32_t)RG_(ecx) != 0) {
+        int64_t _num = (int64_t)(((uint64_t)RG_(edx) << 32) | (uint64_t)(uint32_t)RG_(eax));
+        int32_t _den = (int32_t)RG_(ecx);
+        RG_(eax) = (uint32_t)(_num / _den);
+        RG_(edx) = (uint32_t)(_num % _den);
+    }
     { uint32_t _r = (RG_(edx)) & (RG_(edx)); FLAGS_LOG_M(_r, 32, 0x08u); }
     if (CC_NE) goto L_00435fbf;
 L_00435fa9:
@@ -8853,7 +8897,12 @@ L_0043603c:
     RG_(eax) = (uint32_t)(RG_(esi));
     { uint32_t _a = RG_(eax), _b = RG_(edx), _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x00u); RG_(eax) = (uint32_t)(_r); }
     RG_(edx) = (uint32_t)((int32_t)RG_(eax) >> 31);
-    /* Unsupported: idiv esi (Unsupported mnemonic: idiv (esi)) */
+    if ((int32_t)RG_(esi) != 0) {
+        int64_t _num = (int64_t)(((uint64_t)RG_(edx) << 32) | (uint64_t)(uint32_t)RG_(eax));
+        int32_t _den = (int32_t)RG_(esi);
+        RG_(eax) = (uint32_t)(_num / _den);
+        RG_(edx) = (uint32_t)(_num % _den);
+    }
 L_0043604f:
     RG_(esi) = (uint32_t)((RG_(edx)+RG_(ecx)));
     RG_(ecx) = (uint32_t)(MR32(RG_(edi)+0x10u));
@@ -9087,7 +9136,12 @@ L_004361f1:
 L_00436233:
     RG_(eax) = (uint32_t)(MR32(0xbfbcd8u));
     RG_(edx) = (uint32_t)((int32_t)RG_(eax) >> 31);
-    /* Unsupported: idiv ecx (Unsupported mnemonic: idiv (ecx)) */
+    if ((int32_t)RG_(ecx) != 0) {
+        int64_t _num = (int64_t)(((uint64_t)RG_(edx) << 32) | (uint64_t)(uint32_t)RG_(eax));
+        int32_t _den = (int32_t)RG_(ecx);
+        RG_(eax) = (uint32_t)(_num / _den);
+        RG_(edx) = (uint32_t)(_num % _den);
+    }
     { uint32_t _r = (RG_(edx)) & (RG_(edx)); FLAGS_LOG_M(_r, 32, 0x08u); }
     if (CC_NE) goto L_00436250;
 L_0043623f:
@@ -9273,8 +9327,70 @@ L_00436360:
     RG_(esi) = (uint32_t)(RG_(ebx));
     { uint32_t _r = (RG_(esi)) & (0x1fu); FLAGS_LOG_M(_r, 32, 0x00u); RG_(esi) = (uint32_t)(_r); }
     PUSH32(RG_(edi));
+    RG_(edi) = (uint32_t)(MR32(RG_(esi)*4u + 0xb4dbf0u));
+L_00436373:
+    { uint32_t _r = (RG_(edi)) & (RG_(edi)); FLAGS_LOG_M(_r, 32, 0x08u); }
+    if (CC_NE) goto L_00436394;
+L_00436377:
+    { uint32_t _s = (0x4u) & 31u; if (_s) { uint32_t _v = RG_(esi); uint32_t _r = (_v << _s) & 0xffffffffu; RG_(cf) = (_v >> (32 - _s)) & 1u; FLAGS_LOG_M(_r, 32, 0x00u); RG_(esi) = (uint32_t)(_r); } }
+    RG_(esi) = (uint32_t)(MR32(RG_(esi)+0xb4d9fcu));
+    { uint32_t _r = (RG_(esi)) & (RG_(esi)); FLAGS_LOG_M(_r, 32, 0x08u); }
+    if (CC_E) goto L_004363ce;
+L_00436384:
+    RG_(eax) = (uint32_t)(MR32(RG_(esi)+0x4u));
+    RG_(ecx) = (uint32_t)(MR32(RG_(esi)+0x1cu));
+    PUSH32(RG_(eax));
+    PUSH32(0x0043638du);
     LR_STORE;
-    DISPATCH_TAIL(c, MR32(0x19e7a74u));
+    DISPATCH_CALL(c, RG_(ecx));
+    LR_RELOAD;
+    { uint32_t _a = RG_(esp), _b = 0x4u, _r = _a + _b; FLAGS_ADD_M(_a, _b, _r, 32, 0x00u); RG_(esp) = (uint32_t)(_r); }
+    { uint32_t _t; POP32(_t); RG_(edi) = (uint32_t)(_t); }
+    { uint32_t _t; POP32(_t); RG_(esi) = (uint32_t)(_t); }
+    { uint32_t _t; POP32(_t); RG_(ebx) = (uint32_t)(_t); }
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+L_00436394:
+    { uint32_t _r = (RG_(esi)) & (RG_(esi)); FLAGS_LOG_M(_r, 32, 0x08u); }
+    if (CC_NE) goto L_004363a1;
+L_00436398:
+    { uint32_t _t; POP32(_t); RG_(edi) = (uint32_t)(_t); }
+    { uint32_t _t; POP32(_t); RG_(esi) = (uint32_t)(_t); }
+    RG_(eax) = (uint32_t)(0x6300000u);
+    { uint32_t _t; POP32(_t); RG_(ebx) = (uint32_t)(_t); }
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+L_004363a1:
+    PUSH32(0x004363a6u);
+    LR_STORE;
+    DISPATCH_CALL(c, 0x00435630u);
+    LR_RELOAD;
+    { uint32_t _s = (0x6u) & 31u; if (_s) { int32_t _v = (int32_t)RG_(ebx); uint32_t _r = (uint32_t)(_v >> _s) & 0xffffffffu; RG_(cf) = ((uint32_t)_v >> (_s - 1)) & 1u; FLAGS_LOG_M(_r, 32, 0x00u); RG_(ebx) = (uint32_t)(_r); } }
+    { uint32_t _a = RG_(eax), _b = 0x5cu, _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x00u); RG_(eax) = (uint32_t)(_r); }
+    { uint32_t _r = (RG_(ebx)) & (0x1ffcu); FLAGS_LOG_M(_r, 32, 0x08u); RG_(ebx) = (uint32_t)(_r); }
+    if (CC_NE) goto L_004363bd;
+L_004363b4:
+    { uint32_t _s = (0x4u) & 31u; if (_s) { uint32_t _v = RG_(esi); uint32_t _r = (_v << _s) & 0xffffffffu; RG_(cf) = (_v >> (32 - _s)) & 1u; FLAGS_LOG_M(_r, 32, 0x00u); RG_(esi) = (uint32_t)(_r); } }
+    RG_(ebx) = (uint32_t)(MR32(RG_(esi)+0xb4d9f8u));
+L_004363bd:
+    { uint32_t _a = RG_(ebx), _b = 0x80u, _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x30u); }
+    if (CC_GE) goto L_004363ca;
+L_004363c5:
+    RG_(ebx) = (uint32_t)(0x80u);
+L_004363ca:
+    { uint32_t _a = RG_(eax), _b = RG_(ebx), _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x10u); RG_(eax) = (uint32_t)(_r); }
+    if (CC_NS) goto L_004363d0;
+L_004363ce:
+    { uint32_t _r = (RG_(eax)) ^ (RG_(eax)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(eax) = (uint32_t)(_r); }
+L_004363d0:
+    { uint32_t _t; POP32(_t); RG_(edi) = (uint32_t)(_t); }
+    { uint32_t _t; POP32(_t); RG_(esi) = (uint32_t)(_t); }
+    { uint32_t _t; POP32(_t); RG_(ebx) = (uint32_t)(_t); }
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
 }
 
 void sub_004363e6(CPU *c) {
@@ -61066,7 +61182,20 @@ L_004613ee:
     RG_(edi) = (uint32_t)(MR32(RG_(esp)+0xcu));
     RG_(eax) = (uint32_t)(RG_(edi));
     RG_(edx) = (uint32_t)((int32_t)RG_(eax) >> 31);
-    /* Unsupported: idiv esi (Unsupported mnemonic: idiv (esi)) */
+    {
+        int32_t _den = (int32_t)(RG_(esi));
+        if (_den != 0) {
+            int64_t _num = (int64_t)(((uint64_t)RG_(edx) << 32) | (uint64_t)(uint32_t)RG_(eax));
+            if (!(_num == (-9223372036854775807LL - 1LL) && _den == -1)) {
+                int64_t _q = _num / _den;
+                int64_t _rem = _num % _den;
+                if (_q >= -2147483648LL && _q <= 2147483647LL) {
+                    RG_(eax) = (uint32_t)(int32_t)_q;
+                    RG_(edx) = (uint32_t)(int32_t)_rem;
+                }
+            }
+        }
+    }
     RG_(ecx) = (uint32_t)(RG_(eax));
     { int64_t _p = (int64_t)(int32_t)(RG_(ecx)) * (int64_t)(int32_t)(RG_(esi)); RG_(cf) = RG_(of) = ((int64_t)(int32_t)_p != _p); RG_(ecx) = (uint32_t)((uint32_t)_p); }
     { uint32_t _r = (RG_(edi)) & (RG_(edi)); FLAGS_LOG_M(_r, 32, 0x30u); }
@@ -65466,7 +65595,7 @@ L_00463e90:
     PUSH32(RG_(ebp));
     RG_(ebp) = (uint32_t)(MR32(RG_(esp)+0x10u));
     /* Unspliced SecuROM bridge: cmp ebp, 0x400 (bChunk small-block threshold); jmp 0x463e9d */
-    { uint32_t _a = RG_(ebp), _b = 0x400u, _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x00u); }
+    { uint32_t _a = RG_(ebp), _b = 0x400u, _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x09u); }
 L_00463e9d:
     PUSH32(RG_(esi));
     PUSH32(RG_(edi));
@@ -67096,8 +67225,60 @@ void sub_00465620(CPU *c) {
     LR_ENTER;
 L_00465620:
     PUSH32(0xffffffffu);
+    goto L_004df276;
+L_004df276:
+    PUSH32(RG_(eax));
     LR_STORE;
-    DISPATCH_TAIL(c, 0x004df276u);
+    PUSH32(eflags_get(c));
+    RG_(cf) = 0u;
+    RG_(eax) = (uint32_t)(MR32(0x19eee58u));
+    { uint32_t _ci = RG_(cf) & 1u, _a = RG_(eax), _b = MR32(0x455590u), _r = _a - _b - _ci; FLAGS_SBB_M(_a, _b, _ci, _r, 32, 0x00u); RG_(eax) = (uint32_t)(_r); }
+    { uint32_t _f; POP32(_f); eflags_set(c, _f); }
+    LR_RELOAD;
+    { uint32_t _t0 = (MR32(RG_(esp))), _t1 = (RG_(eax)); MR32(RG_(esp)) = (_t1); RG_(eax) = (uint32_t)(_t0); }
+    goto L_00465627;
+L_00465627:
+    RG_(eax) = (uint32_t)(MR32(c->fs_base));
+    PUSH32(RG_(eax));
+    PUSH32(RG_(ecx));
+    PUSH32(RG_(esi));
+    RG_(eax) = (uint32_t)(MR32(0xa8be00u));
+    { uint32_t _r = (RG_(eax)) ^ (RG_(esp)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(eax) = (uint32_t)(_r); }
+    PUSH32(RG_(eax));
+    RG_(eax) = (uint32_t)((RG_(esp)+0xcu));
+    MR32(c->fs_base) = (RG_(eax));
+    RG_(esi) = (uint32_t)(RG_(ecx));
+    MR32(RG_(esp)+0x8u) = (RG_(esi));
+    RG_(eax) = (uint32_t)(MR32(RG_(esp)+0x20u));
+    RG_(ecx) = (uint32_t)(MR32(RG_(esp)+0x1cu));
+    PUSH32(RG_(eax));
+    PUSH32(RG_(ecx));
+    RG_(ecx) = (uint32_t)(RG_(esi));
+    PUSH32(0x00465659u);
+    LR_STORE;
+    sub_0052aa00(c);
+    LR_RELOAD;
+    MR32(RG_(esp)+0x14u) = (0x0u);
+    { uint32_t _a = MR32(RG_(esi)+0x4u), _b = 0x0u, _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x08u); }
+    if (CC_NE) goto L_00465677;
+L_00465667:
+    PUSH32(0xf8u);
+    PUSH32(0x00465671u);
+    LR_STORE;
+    sub_006a4860(c);
+    LR_RELOAD;
+    { uint32_t _a = RG_(esp), _b = 0x4u, _r = _a + _b; FLAGS_ADD_M(_a, _b, _r, 32, 0x00u); RG_(esp) = (uint32_t)(_r); }
+    MR32(RG_(esi)+0x4u) = (RG_(eax));
+L_00465677:
+    RG_(eax) = (uint32_t)(RG_(esi));
+    RG_(ecx) = (uint32_t)(MR32(RG_(esp)+0xcu));
+    MR32(c->fs_base) = (RG_(ecx));
+    { uint32_t _t; POP32(_t); RG_(ecx) = (uint32_t)(_t); }
+    { uint32_t _t; POP32(_t); RG_(esi) = (uint32_t)(_t); }
+    { uint32_t _a = RG_(esp), _b = 0x10u, _r = _a + _b; FLAGS_ADD_M(_a, _b, _r, 32, 0x00u); RG_(esp) = (uint32_t)(_r); }
+    RG_(esp) += 12u;
+    LR_STORE;
+    return;
 }
 
 void sub_00465696(CPU *c) {

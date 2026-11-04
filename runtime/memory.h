@@ -30,6 +30,7 @@ extern "C" {
 #define GUEST_PAGE_SIZE          0x1000u       /* 4 KiB */
 #define GUEST_NULL_GUARD_LIMIT   0x00100000u   /* 0..1 MB guarded against nullptr */
 #define GUEST_TEB_ADDR           0x00100000u   /* Thread Environment Block */
+#define GUEST_CPU_STRUCT_ADDR    0x00104000u   /* Diagnostic / host guest CPU register structure */
 #define GUEST_STACK_BOTTOM       0x00200000u   /* Stack base (2 MB) */
 #define GUEST_STACK_TOP          0x003FF000u   /* Initial ESP (stack grows down) */
 #define GUEST_IMAGE_BASE         0x00400000u   /* PE Image Base */

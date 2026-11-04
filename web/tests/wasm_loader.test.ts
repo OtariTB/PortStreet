@@ -292,7 +292,7 @@ test('WasmLoader prostreet_tick() through loader path never hangs before or afte
     exp.boot_bind_iats();
     exp.boot_install_hooks();
 
-    const CPU_STRUCT_VA = 0x02000000;
+    const CPU_STRUCT_VA = 0x00104000;
     dv.setUint32(CPU_STRUCT_VA + 16, 0x003ff000, true);
     dv.setUint32(CPU_STRUCT_VA + 32, 0x004afee0, true);
     dv.setUint32(CPU_STRUCT_VA + 36, TEB, true);
