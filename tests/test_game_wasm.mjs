@@ -103,12 +103,17 @@ async function run() {
     wasmMem[0x00400001] = 0x5a; // 'Z'
 
     console.log('[3/5] Setting up TEB (0x00100000) and Guest Stack (0x003FF000)...');
-    // TEB self-pointer at fs:[0x18]
+    // TEB and TLS layout (consistent with runtime/memory.c & tools/guest_boot.py)
     const dv = new DataView(instance.exports.memory.buffer);
-    dv.setUint32(0x00100018, 0x00100000, true);
-    // Stack base/limit in TEB
+    dv.setUint32(0x00100000, 0xFFFFFFFF, true); // SEH frame head
     dv.setUint32(0x00100004, 0x00400000, true); // StackBase
     dv.setUint32(0x00100008, 0x00200000, true); // StackLimit
+    dv.setUint32(0x00100018, 0x00100000, true); // Self-pointer to TEB
+    dv.setUint32(0x00100020, 0x00001000, true); // Simulated PID
+    dv.setUint32(0x00100024, 0x00001001, true); // Simulated TID
+    dv.setUint32(0x0010002c, 0x00100100, true); // ThreadLocalStoragePointer (fs:[0x2c])
+    dv.setUint32(0x00100030, 0x00101000, true); // Simulated PEB
+    dv.setUint32(0x00100100, 0x00100200, true); // TLS module 0 array pointer
 
     console.log('[4/5] Binding IAT shims and installing runtime hooks...');
     instance.exports.boot_bind_iats();
@@ -191,6 +196,8 @@ async function run() {
 
     console.log('[6/5] Setting up main() arguments and entering genuine ProStreet main()...');
     instance.exports.boot_setup_arguments(CPU_STRUCT_VA, 1, 0);
+    // Reset guest EIP to genuine main() entry to eliminate stale constructor addresses
+    dv.setUint32(CPU_STRUCT_VA + 32, 0x004afee0, true);
 
     const t_main = Date.now();
     try {
@@ -202,6 +209,25 @@ async function run() {
         console.log('Trap / Error:', err.message);
         dumpCPU(dv, CPU_STRUCT_VA);
         console.log('============================================================');
+    }
+
+    // Unresolved Indirect Dispatch Table Report
+    if (instance.exports.fntab_get_unresolved_count) {
+        const totalUnres = instance.exports.fntab_get_unresolved_count();
+        const uniqueUnres = instance.exports.fntab_get_unresolved_unique();
+        console.log('\n================ UNRESOLVED INDIRECT DISPATCH REPORT ================');
+        console.log(`Total unresolved calls: ${totalUnres}, Unique targets: ${uniqueUnres}`);
+        for (let i = 0; i < uniqueUnres; i++) {
+            const ptr = instance.exports.fntab_get_unresolved_entry(i);
+            if (ptr !== 0) {
+                const target_va = dv.getUint32(ptr, true);
+                const ret_addr = dv.getUint32(ptr + 4, true);
+                const esp = dv.getUint32(ptr + 8, true);
+                const count = dv.getUint32(ptr + 12, true);
+                console.log(`  [#${i + 1}] Target: 0x${target_va.toString(16).padStart(8, '0')} | Call-Site Ret: 0x${ret_addr.toString(16).padStart(8, '0')} | ESP: 0x${esp.toString(16).padStart(8, '0')} | Hit Count: ${count}`);
+            }
+        }
+        console.log('======================================================================');
     }
 
     // D3D9 Ring Buffer Inspection

@@ -158,6 +158,23 @@ class TestBootUnit(unittest.TestCase):
         # Clean quit flag set
         self.assertEqual(self.mem.read_u32(GUEST_QUIT_FLAG_ADDR), 1)
 
+    def test_teb_tls_chain_resolution_for_main(self):
+        """Validates that main()'s FS:[0x2C] dereference chain resolves to valid guest TLS slot."""
+        fs_base = self.boot.cpu.fs_base
+        self.assertEqual(fs_base, 0x00100000)
+        # fs:[0x2c] is ThreadLocalStoragePointer
+        tls_arr_ptr = self.mem.read_u32(fs_base + 0x2C)
+        self.assertEqual(tls_arr_ptr, 0x00100100)
+        # module 0 array pointer
+        tls_slot0_ptr = self.mem.read_u32(tls_arr_ptr)
+        self.assertEqual(tls_slot0_ptr, 0x00100200)
+        # Verify slot + 4 used by authentic main() resides in valid TEB/TLS range (0x00100000..0x00200000)
+        main_target_slot = tls_slot0_ptr + 4
+        self.assertTrue(0x00100000 <= main_target_slot < 0x00200000)
+        # Verify slot can store and return the engine root object pointer
+        self.mem.write_u32(main_target_slot, 0x022322F0)
+        self.assertEqual(self.mem.read_u32(main_target_slot), 0x022322F0)
+
 
 class TestBootIntegration(unittest.TestCase):
     """Integration tests running end-to-end boot chain on genuine nfs.exe binary."""

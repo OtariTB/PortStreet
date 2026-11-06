@@ -1390,7 +1390,11 @@ class FunctionLifter:
                     if m == "jmp":
                         if ins.operands and ins.operands[0].type == CS_OP_IMM:
                             t = ins.operands[0].imm
-                            if t not in other_funcs and t not in leaders:
+                            if (
+                                t not in other_funcs
+                                and t not in leaders
+                                and t not in block_starts
+                            ):
                                 leaders.add(t)
                                 q.append(t)
                         curr_va += ins.size
@@ -1406,7 +1410,11 @@ class FunctionLifter:
                             t = ins.operands[0].imm
                             ft = ins.address + ins.size
                             for dest in (t, ft):
-                                if dest not in other_funcs and dest not in leaders:
+                                if (
+                                    dest not in other_funcs
+                                    and dest not in leaders
+                                    and dest not in block_starts
+                                ):
                                     leaders.add(dest)
                                     q.append(dest)
                         curr_va += ins.size
@@ -1435,7 +1443,9 @@ class FunctionLifter:
                     b_s = cur_b_insns[0].address
                     b_e = cur_b_insns[-1].address + cur_b_insns[-1].size
                     is_ex = 1 if cur_b_insns[-1].mnemonic in ("ret", "retf") else 0
-                    blocks.append([b_s, b_e, [], is_ex])
+                    if b_s not in block_starts:
+                        blocks.append([b_s, b_e, [], is_ex])
+                        block_starts.add(b_s)
                     cur_b_insns = [ins]
                 else:
                     cur_b_insns.append(ins)
@@ -1443,9 +1453,17 @@ class FunctionLifter:
                 b_s = cur_b_insns[0].address
                 b_e = cur_b_insns[-1].address + cur_b_insns[-1].size
                 is_ex = 1 if cur_b_insns[-1].mnemonic in ("ret", "retf") else 0
-                blocks.append([b_s, b_e, [], is_ex])
+                if b_s not in block_starts:
+                    blocks.append([b_s, b_e, [], is_ex])
+                    block_starts.add(b_s)
 
-        return blocks
+        seen_starts = set()
+        dedup_blocks = []
+        for b in blocks:
+            if b[0] not in seen_starts:
+                seen_starts.add(b[0])
+                dedup_blocks.append(b)
+        return dedup_blocks
 
     def lift_function(
         self,

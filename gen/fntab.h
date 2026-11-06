@@ -32046,9 +32046,21 @@ void sub_01f4fa9d(CPU *c);
 /* Master dispatch table initialization (call during engine boot) */
 void fntab_init(void);
 
+/* Unresolved indirect dispatch tracking */
+typedef struct {
+    uint32_t target_va;
+    uint32_t call_site_ret;
+    uint32_t esp;
+    uint32_t count;
+} unresolved_dispatch_t;
+
 /* Secondary indirect dispatch handler */
 void dispatch_indirect(struct CPU *c, uint32_t addr);
 void dispatch_tail(struct CPU *c);
+uint32_t fntab_get_unresolved_count(void);
+uint32_t fntab_get_unresolved_unique(void);
+const unresolved_dispatch_t *fntab_get_unresolved_entry(uint32_t idx);
+void fntab_reset_unresolved(void);
 
 #ifdef __cplusplus
 }

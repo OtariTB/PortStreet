@@ -271,6 +271,7 @@ int boot_invoke_main(CPU *c, bool dry_run) {
     }
 
     /* Normal full dispatch of sub_004afee0 */
+    c->eip = GUEST_MAIN_ENTRY_VA;
     DISPATCH_CALL(c, GUEST_MAIN_ENTRY_VA);
     g_boot_status.stage = BOOT_STAGE_MAIN_EXITED;
     g_boot_status.exit_code = (int)c->eax;

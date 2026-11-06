@@ -33041,6 +33041,30 @@ void fntab_init(void) {
     fntab_init_chunk_12();
 }
 
+#define MAX_UNRESOLVED_RECORDED 64
+static uint32_t s_unresolved_count = 0;
+static uint32_t s_unresolved_unique = 0;
+static unresolved_dispatch_t s_unresolved_dispatches[MAX_UNRESOLVED_RECORDED];
+
+uint32_t fntab_get_unresolved_count(void) {
+    return s_unresolved_count;
+}
+
+uint32_t fntab_get_unresolved_unique(void) {
+    return s_unresolved_unique;
+}
+
+const unresolved_dispatch_t *fntab_get_unresolved_entry(uint32_t idx) {
+    if (idx < s_unresolved_unique) return &s_unresolved_dispatches[idx];
+    return (const unresolved_dispatch_t *)0;
+}
+
+void fntab_reset_unresolved(void) {
+    s_unresolved_count = 0;
+    s_unresolved_unique = 0;
+    memset(s_unresolved_dispatches, 0, sizeof(s_unresolved_dispatches));
+}
+
 void dispatch_indirect(struct CPU *c, uint32_t addr) {
     uint32_t off = addr - DISPATCH_TEXT_BASE;
     if (off < DISPATCH_TEXT_SIZE) {
@@ -34256,10 +34280,24 @@ void dispatch_indirect(struct CPU *c, uint32_t addr) {
     case 0x01f4fa9du: sub_01f4fa9d(c); return;
     default:
         c->eip = addr;
-#ifndef __wasm__
-        fprintf(stderr, "[DISPATCH] Unresolved indirect target: 0x%08x (esp=0x%08x [esp]=0x%08x)\n", addr, c->esp, MR32(c->esp));
-        fflush(stderr);
-#endif
+        s_unresolved_count++;
+        uint32_t ret_addr = (c && c->esp >= 0x00200000 && c->esp < 0x00400000) ? MR32(c->esp) : 0;
+        int found = 0;
+        for (uint32_t i = 0; i < s_unresolved_unique; i++) {
+            if (s_unresolved_dispatches[i].target_va == addr) {
+                s_unresolved_dispatches[i].count++;
+                found = 1;
+                break;
+            }
+        }
+        if (!found && s_unresolved_unique < MAX_UNRESOLVED_RECORDED) {
+            s_unresolved_dispatches[s_unresolved_unique].target_va = addr;
+            s_unresolved_dispatches[s_unresolved_unique].call_site_ret = ret_addr;
+            s_unresolved_dispatches[s_unresolved_unique].esp = c ? c->esp : 0;
+            s_unresolved_dispatches[s_unresolved_unique].count = 1;
+            s_unresolved_unique++;
+        }
+        fprintf(stderr, "[DISPATCH] Unresolved indirect target: 0x%08x (esp=0x%08x [esp]=0x%08x)\n", addr, c ? c->esp : 0, ret_addr);
         return;
     }
 }

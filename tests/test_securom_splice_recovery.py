@@ -229,5 +229,76 @@ class TestSecuROMSpliceRecovery(unittest.TestCase):
 
         self.assertEqual(len(failures), 0, f"Expected 0 failures, got {len(failures)}: {failures[:5]}")
 
+    def test_production_shards_contain_complete_recovered_cfgs(self):
+        """Verify that production gen/shard_*.c contain the full recovered CFG for all candidates."""
+        manifest = json.loads((WORKSPACE / "gen" / "manifest.json").read_text(encoding="utf-8"))
+        
+        # Build mapping from address range to shard file
+        shard_ranges = []
+        for s in manifest["shards"]:
+            shard_ranges.append((int(s["min_address"], 16), int(s["max_address"], 16), s["filename"]))
+
+        def find_shard_for_va(va: int):
+            for lo, hi, name in shard_ranges:
+                if lo <= va <= hi:
+                    return name
+            return None
+
+        # Sample 20 diverse candidates across different shards
+        test_candidates = [
+            (0x00402820, 0x004df28d, "L_00402827:"),
+            (0x00402310, 0x004544d2, "L_00402317:"),
+            (0x00405dd0, 0x0052c8b6, "L_00405dd7:"),
+            (0x00409e90, 0x00537dc6, "L_00409eaf:"),
+            (0x00420590, 0x0045ad26, "L_00420597:"),
+            (0x004318e0, 0x00433816, "L_004318e9:"),
+            (0x00465620, 0x004df276, "L_00465627:"),
+            (0x004d2e90, 0x0044a7e0, "L_004d2e9d:"),
+        ]
+
+        for va, splice_va, continuation_label in test_candidates:
+            shard_file = find_shard_for_va(va)
+            self.assertIsNotNone(shard_file, f"No shard found for 0x{va:08x}")
+            shard_text = (WORKSPACE / "gen" / shard_file).read_text(encoding="utf-8")
+            m = re.search(rf'void sub_{va:08x}\(CPU \*c\) \{{(.*?)\n\}}', shard_text, re.DOTALL)
+            self.assertIsNotNone(m, f"sub_{va:08x} not found in {shard_file}")
+            fn_code = m.group(1)
+
+            # Must NOT contain truncated tail dispatch to splice
+            self.assertNotIn(
+                f"DISPATCH_TAIL(c, 0x{splice_va:08x}u);",
+                fn_code,
+                f"sub_{va:08x} in {shard_file} still has unresolvable DISPATCH_TAIL to splice",
+            )
+            # Must contain continuation label
+            self.assertIn(
+                continuation_label,
+                fn_code,
+                f"sub_{va:08x} in {shard_file} missing continuation block {continuation_label}",
+            )
+
+    def test_sub_0066666f_cyclic_splice_deduplication(self):
+        """sub_0066666f contains a cyclic loop branching back to splice 0x0053aea9.
+        Verify that L_0053aea9 is emitted exactly once, with correct branch connectivity."""
+        fn_code = self.fl.lift_function(0x0066666f)
+        # Exactly one definition of label L_0053aea9
+        self.assertEqual(
+            fn_code.count("L_0053aea9:"),
+            1,
+            "L_0053aea9 must be defined exactly once in sub_0066666f",
+        )
+        # Both entry (0x0066666f) and loop block (0x00666670) must branch to L_0053aea9
+        self.assertEqual(
+            fn_code.count("goto L_0053aea9;"),
+            2,
+            "Both entry and loop blocks must branch to L_0053aea9",
+        )
+        # Splice must branch to continuation block L_00666679
+        self.assertIn("goto L_00666679;", fn_code)
+        # Loop conditional jump must branch to L_00666670
+        self.assertIn("if (CC_NE) goto L_00666670;", fn_code)
+        # Authentic terminal return must be present
+        self.assertIn("return;", fn_code)
+
 if __name__ == "__main__":
     unittest.main()
