@@ -96310,3 +96310,19 @@ L_00430cb0:
     LR_STORE;
     DISPATCH_TAIL(c, 0x004291e0u);
 }
+
+
+/* --- Recovered Indirect Callbacks --- */
+void sub_00428f30(CPU *c) {
+    LR_ENTER;
+L_00428f30:
+    RG_(eax) = (uint32_t)(RG_(ecx));
+    { uint32_t _r = (RG_(ecx)) ^ (RG_(ecx)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(ecx) = (uint32_t)(_r); }
+    MR32(RG_(eax)+0x8u) = (RG_(ecx));
+    MR32(RG_(eax)+0xcu) = (RG_(ecx));
+    MR16(RG_(eax)+0x14u) = (0xffffu);
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+}
+

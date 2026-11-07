@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WASI } from 'wasi';
+import { Worker } from 'node:worker_threads';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -65,72 +66,112 @@ async function run() {
         process.exit(1);
     }
 
-    const wasi = new WASI({
-        version: 'preview1',
-        args: ['nfs.exe'],
-        env: process.env,
-    });
+    let worker = null;
+    let instance = null;
 
-    const wasmBytes = fs.readFileSync(WASM_PATH);
-    const module = new WebAssembly.Module(wasmBytes);
-    const instance = new WebAssembly.Instance(module, {
-        wasi_snapshot_preview1: wasi.wasiImport,
-    });
+    try {
+        const wasi = new WASI({
+            version: 'preview1',
+            args: ['nfs.exe'],
+            env: process.env,
+        });
 
-    wasi.initialize(instance);
+        // 1. Allocate 704 MB Shared Linear Memory
+        const sharedMemory = new WebAssembly.Memory({
+            shared: true,
+            initial: 11264,
+            maximum: 11264,
+        });
 
-    console.log('[1/5] Calling fntab_init() to populate master dispatch table...');
-    const t0 = Date.now();
-    instance.exports.fntab_init();
-    console.log(`      fntab_init completed in ${Date.now() - t0}ms`);
+        const wasmBytes = fs.readFileSync(WASM_PATH);
+        const module = new WebAssembly.Module(wasmBytes);
+        instance = new WebAssembly.Instance(module, {
+            wasi_snapshot_preview1: wasi.wasiImport,
+            env: { memory: sharedMemory },
+        });
 
-    console.log('[2/5] Loading authentic PE sections into WASM linear memory...');
-    const exeBuf = fs.readFileSync(NFS_EXE_PATH);
-    const sections = parsePEHeaders(exeBuf);
-    const wasmMem = new Uint8Array(instance.exports.memory.buffer);
-
-    for (const sec of sections) {
-        if (sec.rawSize > 0 && sec.rawOffset > 0) {
-            const data = exeBuf.subarray(sec.rawOffset, sec.rawOffset + sec.rawSize);
-            const dst = 0x00400000 + sec.virtAddr;
-            wasmMem.set(data, dst);
-            console.log(`      Mapped ${sec.name.padEnd(8)} at 0x${dst.toString(16).padStart(8, '0')} (${(sec.rawSize / 1024).toFixed(1)} KB)`);
+        if (wasi.initialize) {
+            wasi.initialize(instance);
         }
-    }
 
-    // Set DOS header signature 'MZ' at 0x00400000
-    wasmMem[0x00400000] = 0x4d; // 'M'
-    wasmMem[0x00400001] = 0x5a; // 'Z'
+        console.log('[1/5] Calling fntab_init() to populate master dispatch table...');
+        const t0 = Date.now();
+        instance.exports.fntab_init();
+        console.log(`      fntab_init completed in ${Date.now() - t0}ms`);
 
-    console.log('[3/5] Setting up TEB (0x00100000) and Guest Stack (0x003FF000)...');
-    // TEB and TLS layout (consistent with runtime/memory.c & tools/guest_boot.py)
-    const dv = new DataView(instance.exports.memory.buffer);
-    dv.setUint32(0x00100000, 0xFFFFFFFF, true); // SEH frame head
-    dv.setUint32(0x00100004, 0x00400000, true); // StackBase
-    dv.setUint32(0x00100008, 0x00200000, true); // StackLimit
-    dv.setUint32(0x00100018, 0x00100000, true); // Self-pointer to TEB
-    dv.setUint32(0x00100020, 0x00001000, true); // Simulated PID
-    dv.setUint32(0x00100024, 0x00001001, true); // Simulated TID
-    dv.setUint32(0x0010002c, 0x00100100, true); // ThreadLocalStoragePointer (fs:[0x2c])
-    dv.setUint32(0x00100030, 0x00101000, true); // Simulated PEB
-    dv.setUint32(0x00100100, 0x00100200, true); // TLS module 0 array pointer
+        console.log('[2/5] Loading authentic PE sections into WASM linear memory...');
+        const exeBuf = fs.readFileSync(NFS_EXE_PATH);
+        const sections = parsePEHeaders(exeBuf);
+        const wasmMem = new Uint8Array(sharedMemory.buffer);
 
-    console.log('[4/5] Binding IAT shims and installing runtime hooks...');
-    instance.exports.boot_bind_iats();
-    instance.exports.boot_install_hooks();
+        for (const sec of sections) {
+            if (sec.rawSize > 0 && sec.rawOffset > 0) {
+                const data = exeBuf.subarray(sec.rawOffset, sec.rawOffset + sec.rawSize);
+                const dst = 0x00400000 + sec.virtAddr;
+                wasmMem.set(data, dst);
+                console.log(`      Mapped ${sec.name.padEnd(8)} at 0x${dst.toString(16).padStart(8, '0')} (${(sec.rawSize / 1024).toFixed(1)} KB)`);
+            }
+        }
 
-    // Allocate guest CPU structure in reserved TEB/TLS page (0x00104000)
-    // Non-overlapping with guest dynamic heap (0x02000000..0x28000000)
-    const CPU_STRUCT_VA = 0x00104000;
-    // Zero out CPU struct
-    for (let i = 0; i < 512; i++) wasmMem[CPU_STRUCT_VA + i] = 0;
-    // Set CPU fields:
-    // esp (offset 16) = 0x003ff000
-    dv.setUint32(CPU_STRUCT_VA + 16, 0x003ff000, true);
-    // eip (offset 32) = 0x004afee0 (GUEST_MAIN_ENTRY_VA)
-    dv.setUint32(CPU_STRUCT_VA + 32, 0x004afee0, true);
-    // fs_base (offset 36) = 0x00100000
-    dv.setUint32(CPU_STRUCT_VA + 36, 0x00100000, true);
+        // Set DOS header signature 'MZ' at 0x00400000
+        wasmMem[0x00400000] = 0x4d; // 'M'
+        wasmMem[0x00400001] = 0x5a; // 'Z'
+
+        console.log('[3/5] Setting up TEB (0x00100000) and Guest Stack (0x003FF000)...');
+        // TEB and TLS layout (consistent with runtime/memory.c & tools/guest_boot.py)
+        const dv = new DataView(sharedMemory.buffer);
+        dv.setUint32(0x00100000, 0xFFFFFFFF, true); // SEH frame head
+        dv.setUint32(0x00100004, 0x00400000, true); // StackBase
+        dv.setUint32(0x00100008, 0x00200000, true); // StackLimit
+        dv.setUint32(0x00100018, 0x00100000, true); // Self-pointer to TEB
+        dv.setUint32(0x00100020, 0x00001000, true); // Simulated PID
+        dv.setUint32(0x00100024, 0x00001001, true); // Simulated TID
+        dv.setUint32(0x0010002c, 0x00100100, true); // ThreadLocalStoragePointer (fs:[0x2c])
+        dv.setUint32(0x00100030, 0x00101000, true); // Simulated PEB
+        dv.setUint32(0x00100100, 0x00100200, true); // TLS module 0 array pointer
+
+        console.log('[4/5] Binding IAT shims and installing runtime hooks...');
+        instance.exports.boot_bind_iats();
+        instance.exports.boot_install_hooks();
+
+        // Allocate guest CPU structure in reserved TEB/TLS page (0x00104000)
+        // Non-overlapping with guest dynamic heap (0x02000000..0x28000000)
+        const CPU_STRUCT_VA = 0x00104000;
+        const WORKER_CPU_VA = 0x00105000;
+        // Zero out CPU structs
+        for (let i = 0; i < 512; i++) {
+            wasmMem[CPU_STRUCT_VA + i] = 0;
+            wasmMem[WORKER_CPU_VA + i] = 0;
+        }
+        // Set Main CPU fields:
+        // esp (offset 16) = 0x003ff000
+        dv.setUint32(CPU_STRUCT_VA + 16, 0x003ff000, true);
+        // eip (offset 32) = 0x004afee0 (GUEST_MAIN_ENTRY_VA)
+        dv.setUint32(CPU_STRUCT_VA + 32, 0x004afee0, true);
+        // fs_base (offset 36) = 0x00100000
+        dv.setUint32(CPU_STRUCT_VA + 36, 0x00100000, true);
+
+        console.log('[4b/5] Launching background guest worker thread with shared memory...');
+        worker = new Worker(path.resolve(__dirname, 'worker_game_thread.mjs'), {
+            workerData: {
+                wasmPath: WASM_PATH,
+                sharedMemory,
+                workerCpuVa: WORKER_CPU_VA,
+            }
+        });
+
+        await new Promise((resolve, reject) => {
+            worker.on('message', (msg) => {
+                if (msg.type === 'READY') resolve();
+                if (msg.type === 'ERROR') {
+                    console.error('[Worker Error]:', msg.error, msg.stack);
+                }
+            });
+            worker.on('error', reject);
+        });
+
+        worker.postMessage({ type: 'RUN_LOOP' });
+        console.log('      Background worker running in guest_worker_thread_run loop.');
 
     console.log('[5/5] Executing genuine C++ static initializers in WebAssembly...');
     const t_init = Date.now();
@@ -175,6 +216,25 @@ async function run() {
             }
         }
         console.log("      Constructors executed: " + count + " / 960 in " + (Date.now() - t_init) + "ms");
+
+        // Inspect 9,000-element array initialized by sub_004b2f80 (Constructor #922 / 0x00c04c3c)
+        const arr9k = 0x00c04c3c;
+        const elem0_10 = dv.getUint32(arr9k + 0x10, true);
+        const elem0_50 = dv.getUint32(arr9k + 0x50, true);
+        const elem0_9c = dv.getUint32(arr9k + 0x9c, true);
+        const elem0_a0 = dv.getUint32(arr9k + 0xa0, true);
+        const lastElem = arr9k + 8999 * 0xa8;
+        const last_10 = dv.getUint32(lastElem + 0x10, true);
+        const last_50 = dv.getUint32(lastElem + 0x50, true);
+        const last_9c = dv.getUint32(lastElem + 0x9c, true);
+        const last_a0 = dv.getUint32(lastElem + 0xa0, true);
+        console.log(`      [PASS] 9,000-element array (0x${arr9k.toString(16)}): elem[0] fields=(${elem0_10},${elem0_50},${elem0_9c},${elem0_a0}), elem[8999] fields=(${last_10},${last_50},${last_9c},${last_a0})`);
+
+        if (instance.exports.fntab_get_unresolved_count) {
+            const ctorUnres = instance.exports.fntab_get_unresolved_count();
+            const ctorUnresU = instance.exports.fntab_get_unresolved_unique();
+            console.log(`      Unresolved dispatches during static initializers: ${ctorUnres} (unique: ${ctorUnresU})`);
+        }
     } catch (err) {
         console.error(`[FAIL] Constructor #${current_ctor} (0x${current_fn.toString(16)}) trapped:`, err);
         dumpCPU(dv, CPU_STRUCT_VA);
@@ -231,7 +291,7 @@ async function run() {
     }
 
     // D3D9 Ring Buffer Inspection
-    const D3D9_RING_BUFFER_VA = 0x02010000;
+    const D3D9_RING_BUFFER_VA = 0x27810000;
     const ringMagic = dv.getUint32(D3D9_RING_BUFFER_VA, true);
     const ringVer = dv.getUint32(D3D9_RING_BUFFER_VA + 4, true);
     const ringHead = dv.getUint32(D3D9_RING_BUFFER_VA + 8, true);
@@ -292,6 +352,20 @@ async function run() {
         console.log(`Element array resides in dynamic heap! Heap alloc header count=${allocHeader}`);
     } else {
         console.log(`WARNING: Element array pointer 0x${c169Arr.toString(16)} is not in heap range!`);
+    }
+
+    console.log('\n=== GUEST THREAD & CONCURRENCY STATE ===');
+    const wesp = dv.getUint32(WORKER_CPU_VA + 16, true);
+    const weip = dv.getUint32(WORKER_CPU_VA + 32, true);
+    const weax = dv.getUint32(WORKER_CPU_VA + 0, true);
+    console.log(`Worker CPU: ESP=0x${wesp.toString(16).padStart(8, '0')} EIP=0x${weip.toString(16).padStart(8, '0')} EAX=0x${weax.toString(16).padStart(8, '0')}`);
+    } finally {
+        if (instance && instance.exports.guest_worker_thread_stop) {
+            try { instance.exports.guest_worker_thread_stop(); } catch (e) {}
+        }
+        if (worker) {
+            try { await worker.terminate(); } catch (e) {}
+        }
     }
 }
 

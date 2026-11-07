@@ -55178,3 +55178,28 @@ L_0055f615:
     MR32(0x1a6b498u) = (0x1a3u);
     goto L_00540693;
 }
+
+
+/* --- Recovered Indirect Callbacks --- */
+void sub_005316e0(CPU *c) {
+    LR_ENTER;
+L_005316e0:
+    RG_(eax) = (uint32_t)(RG_(ecx));
+    { uint32_t _r = (RG_(ecx)) ^ (RG_(ecx)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(ecx) = (uint32_t)(_r); }
+    MR8(RG_(eax)) = (0xffu);
+    MR8(RG_(eax)+0x1u) = ((uint8_t)RG_(ecx));
+    MR16(RG_(eax)+0x2u) = ((uint16_t)RG_(ecx));
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+}
+
+void sub_00531730(CPU *c) {
+    LR_ENTER;
+L_00531730:
+    MR32(RG_(ecx)) = (0x96f014u);
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+}
+

@@ -83790,3 +83790,34 @@ L_0075bbb0:
     LR_STORE;
     return;
 }
+
+
+/* --- Recovered Indirect Callbacks --- */
+void sub_007242c0(CPU *c) {
+    LR_ENTER;
+L_007242c0:
+    LR_STORE;
+    DISPATCH_TAIL(c, 0x00722250u);
+}
+
+void sub_007360a0(CPU *c) {
+    LR_ENTER;
+L_007360a0:
+    RG_(eax) = (uint32_t)(RG_(ecx));
+    { uint32_t _r = (RG_(ecx)) ^ (RG_(ecx)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(ecx) = (uint32_t)(_r); }
+    MR32(RG_(eax)+0x4u) = (RG_(ecx));
+    MR32(RG_(eax)+0x8u) = (RG_(ecx));
+    MR32(RG_(eax)+0xcu) = (RG_(ecx));
+    MR32(RG_(eax)) = (0x995590u);
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+}
+
+void sub_00750b40(CPU *c) {
+    LR_ENTER;
+L_00750b40:
+    LR_STORE;
+    DISPATCH_TAIL(c, MR32(0x19e79a8u));
+}
+

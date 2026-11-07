@@ -185,6 +185,16 @@ GAME_EXPORTS = [
     "fntab_reset_unresolved",
 
     "guest_memory_init",
+    "guest_init_worker_teb",
+    "boot_bind_iats",
+    "win32_create_event",
+    "win32_signal_event",
+    "win32_reset_event",
+    "win32_get_event_state_addr",
+    "guest_worker_thread_run",
+    "guest_worker_thread_stop",
+    "win32_resume_guest_thread",
+    "win32_create_guest_thread",
 
     "g_dtab",
 
@@ -211,47 +221,39 @@ GAME_EXPORTS = [
 
 
 GAME_CFLAGS = [
-
     "-target", "wasm32-wasi",
-
     "-msimd128",
-
     "-mtail-call",
-
+    "-matomics",
+    "-mbulk-memory",
+    "-pthread",
     "-O1",
-
     "-g0",
-
     "-Wno-c23-extensions",
-
     "-I.",
-
     "-Iruntime",
-
     "-Iinclude",
-
     "-DPROSTREET_PORT=1",
-
     "-DPROSTREET_LREGS=1",
-
 ]
 
 
 
 GAME_LDFLAGS = [
-
     "-target", "wasm32-wasi",
-
     "-mexec-model=reactor",
+    "-matomics",
+    "-mbulk-memory",
+    "-pthread",
+    "-Wl,--shared-memory",
+    "-Wl,--import-memory",
+    "-Wl,--export-memory",
 
     "-Wl,--initial-memory=2c000000",   # 704 MB (0x2c000000)
-
     "-Wl,--max-memory=2c000000",
-
     "-Wl,--global-base=28000000",      # 640 MB (0x28000000) - places g_dtab & BSS above 640MB guest heap
-
     "-Wl,-z,stack-size=65536",          # 64 KB WASM stack in null-guard page
-
+    "-Wl,--export=__stack_pointer",
 ] + [f"-Wl,--export={exp}" for exp in GAME_EXPORTS]
 
 
@@ -559,8 +561,10 @@ def get_linker_flags(toolchain: ToolchainInfo, opt: str = "-O3", out_wasm: Path 
         f"-Wl,--global-base={GUEST_MEMORY_SIZE}",
 
         "-Wl,--import-memory",
-
         "-Wl,--export-memory",
+
+
+    
 
         "-Wl,--shared-memory",
 

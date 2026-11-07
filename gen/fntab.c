@@ -22530,6 +22530,7 @@ static void fntab_init_chunk_8(void) {
     g_dtab[0x004962c0u] = sub_008972c0;
     g_dtab[0x004964e1u] = sub_008974e1;
     g_dtab[0x004965c3u] = sub_008975c3;
+    g_dtab[0x004966e4u] = sub_008976e4;
     g_dtab[0x0049670au] = sub_0089770a;
     g_dtab[0x004967a9u] = sub_008977a9;
     g_dtab[0x004967e1u] = sub_008977e1;
@@ -22555,6 +22556,7 @@ static void fntab_init_chunk_9(void) {
     g_dtab[0x00498129u] = sub_00899129;
     g_dtab[0x0049815au] = sub_0089915a;
     g_dtab[0x00498193u] = sub_00899193;
+    g_dtab[0x004981acu] = sub_008991ac;
     g_dtab[0x0049827du] = sub_0089927d;
     g_dtab[0x0049839fu] = sub_0089939f;
     g_dtab[0x004984d2u] = sub_008994d2;
@@ -24717,6 +24719,7 @@ static void fntab_init_chunk_9(void) {
     g_dtab[0x0052d210u] = sub_0092e210;
     g_dtab[0x0052d23bu] = sub_0092e23b;
     g_dtab[0x0052d25eu] = sub_0092e25e;
+    g_dtab[0x0052d287u] = sub_0092e287;
     g_dtab[0x0052d2d5u] = sub_0092e2d5;
     g_dtab[0x0052d2e6u] = sub_0092e2e6;
     g_dtab[0x0052d2fcu] = sub_0092e2fc;
@@ -33024,7 +33027,88 @@ static void fntab_init_trampolines(void) {
     g_dtab[0x003cf41cu] = sub_004dedf6;
 }
 
+
+static void fntab_init_recovered_callbacks(void) {
+    g_dtab[0x00027f30u] = sub_00428f30;
+    g_dtab[0x00033fb0u] = sub_00434fb0;
+    g_dtab[0x000408a0u] = sub_004418a0;
+    g_dtab[0x00051fd0u] = sub_00452fd0;
+    g_dtab[0x00053ef0u] = sub_00454ef0;
+    g_dtab[0x00053f10u] = sub_00454f10;
+    g_dtab[0x0005ccd0u] = sub_0045dcd0;
+    g_dtab[0x00076dc0u] = sub_00477dc0;
+    g_dtab[0x0007dd90u] = sub_0047ed90;
+    g_dtab[0x0009eae0u] = sub_0049fae0;
+    g_dtab[0x0009eaf0u] = sub_0049faf0;
+    g_dtab[0x000a5f50u] = sub_004a6f50;
+    g_dtab[0x000ac280u] = sub_004ad280;
+    g_dtab[0x000b1f80u] = sub_004b2f80;
+    g_dtab[0x000cc2f0u] = sub_004cd2f0;
+    g_dtab[0x000df520u] = sub_004e0520;
+    g_dtab[0x000df560u] = sub_004e0560;
+    g_dtab[0x00110550u] = sub_00511550;
+    g_dtab[0x00110d20u] = sub_00511d20;
+    g_dtab[0x00110d40u] = sub_00511d40;
+    g_dtab[0x001306e0u] = sub_005316e0;
+    g_dtab[0x00130730u] = sub_00531730;
+    g_dtab[0x00157670u] = sub_00558670;
+    g_dtab[0x001609e0u] = sub_005619e0;
+    g_dtab[0x00164410u] = sub_00565410;
+    g_dtab[0x00169c00u] = sub_0056ac00;
+    g_dtab[0x0018de50u] = sub_0058ee50;
+    g_dtab[0x0018de60u] = sub_0058ee60;
+    g_dtab[0x0018f6c0u] = sub_005906c0;
+    g_dtab[0x001a43e0u] = sub_005a53e0;
+    g_dtab[0x001b3590u] = sub_005b4590;
+    g_dtab[0x00222740u] = sub_00623740;
+    g_dtab[0x00222760u] = sub_00623760;
+    g_dtab[0x002227b0u] = sub_006237b0;
+    g_dtab[0x002227e0u] = sub_006237e0;
+    g_dtab[0x00224220u] = sub_00625220;
+    g_dtab[0x00225190u] = sub_00626190;
+    g_dtab[0x002271f0u] = sub_006281f0;
+    g_dtab[0x00228b70u] = sub_00629b70;
+    g_dtab[0x0022b140u] = sub_0062c140;
+    g_dtab[0x00234020u] = sub_00635020;
+    g_dtab[0x0025c010u] = sub_0065d010;
+    g_dtab[0x0025ef70u] = sub_0065ff70;
+    g_dtab[0x002765a0u] = sub_006775a0;
+    g_dtab[0x00278a40u] = sub_00679a40;
+    g_dtab[0x00291840u] = sub_00692840;
+    g_dtab[0x002d2370u] = sub_006d3370;
+    g_dtab[0x003212d0u] = sub_007222d0;
+    g_dtab[0x00321310u] = sub_00722310;
+    g_dtab[0x00321510u] = sub_00722510;
+    g_dtab[0x00322300u] = sub_00723300;
+    g_dtab[0x00322310u] = sub_00723310;
+    g_dtab[0x00322320u] = sub_00723320;
+    g_dtab[0x003232c0u] = sub_007242c0;
+    g_dtab[0x003350a0u] = sub_007360a0;
+    g_dtab[0x0034fb40u] = sub_00750b40;
+    g_dtab[0x0035eb40u] = sub_0075fb40;
+    g_dtab[0x0035eea0u] = sub_0075fea0;
+    g_dtab[0x00369b80u] = sub_0076ab80;
+    g_dtab[0x00369bc0u] = sub_0076abc0;
+    g_dtab[0x00369be0u] = sub_0076abe0;
+    g_dtab[0x0036fd20u] = sub_00770d20;
+    g_dtab[0x003b06b0u] = sub_007b16b0;
+    g_dtab[0x003b06c0u] = sub_007b16c0;
+    g_dtab[0x003ca590u] = sub_007cb590;
+    g_dtab[0x003eaad0u] = sub_007ebad0;
+    g_dtab[0x003f0f20u] = sub_007f1f20;
+    g_dtab[0x003f1b80u] = sub_007f2b80;
+    g_dtab[0x003f8d00u] = sub_007f9d00;
+    g_dtab[0x0041b2c0u] = sub_0081c2c0;
+    g_dtab[0x0041b2e0u] = sub_0081c2e0;
+    g_dtab[0x00421c30u] = sub_00822c30;
+    g_dtab[0x00422680u] = sub_00823680;
+    g_dtab[0x004255c0u] = sub_008265c0;
+    g_dtab[0x00425600u] = sub_00826600;
+    g_dtab[0x00425e40u] = sub_00826e40;
+}
+
 void fntab_init(void) {
+    fntab_init_recovered_callbacks();
     fntab_init_trampolines();
     fntab_init_chunk_0();
     fntab_init_chunk_1();

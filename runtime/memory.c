@@ -142,7 +142,14 @@ uint32_t guest_virtual_alloc(uint32_t target_va, uint32_t size, uint32_t alloc_t
         /* Align heap bump pointer to 64 KiB boundary */
         s_heap_cur = (s_heap_cur + 0xFFFFu) & ~0xFFFFu;
         target_va = s_heap_cur;
+        if ((uint64_t)target_va + (uint64_t)aligned_size > (uint64_t)GUEST_HEAP_LIMIT) {
+            return 0;
+        }
         s_heap_cur += aligned_size;
+    } else {
+        if ((uint64_t)target_va + (uint64_t)aligned_size > (uint64_t)GUEST_HEAP_LIMIT) {
+            return 0;
+        }
     }
 
     if (!guest_is_valid_va(target_va, aligned_size)) {
@@ -172,14 +179,33 @@ uint32_t guest_heap_alloc(uint32_t size, uint32_t alignment) {
     if (alignment < 4) alignment = 4;
 
     uint32_t mask = alignment - 1u;
-    s_heap_cur = (s_heap_cur + mask) & ~mask;
-    uint32_t allocated = s_heap_cur;
-    s_heap_cur += size;
-
-    if (!guest_is_valid_va(allocated, size)) {
-        return 0;
+    uint32_t cur = __atomic_load_n(&s_heap_cur, __ATOMIC_RELAXED);
+    while (1) {
+        uint32_t allocated = (cur + mask) & ~mask;
+        if ((uint64_t)allocated + (uint64_t)size > (uint64_t)GUEST_HEAP_LIMIT) {
+            return 0;
+        }
+        uint32_t next = allocated + size;
+        if (__atomic_compare_exchange_n(&s_heap_cur, &cur, next, false, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
+            if (!guest_is_valid_va(allocated, size)) {
+                return 0;
+            }
+            return allocated;
+        }
     }
-    return allocated;
+}
+
+void guest_init_worker_teb(struct CPU *c) {
+    if (c == NULL) return;
+    MR32(GUEST_WORKER_TEB_ADDR + 0x00u) = 0xFFFFFFFFu;               /* SEH frame head */
+    MR32(GUEST_WORKER_TEB_ADDR + 0x04u) = GUEST_WORKER_STACK_TOP;   /* Stack Base */
+    MR32(GUEST_WORKER_TEB_ADDR + 0x08u) = GUEST_WORKER_STACK_BOTTOM;/* Stack Limit */
+    MR32(GUEST_WORKER_TEB_ADDR + 0x18u) = GUEST_WORKER_TEB_ADDR;    /* Self-pointer to TEB */
+    MR32(GUEST_WORKER_TEB_ADDR + 0x20u) = 0x00001000u;               /* Simulated PID */
+    MR32(GUEST_WORKER_TEB_ADDR + 0x24u) = 0x00001002u;               /* Simulated Worker TID */
+    MR32(GUEST_WORKER_TEB_ADDR + 0x2cu) = GUEST_TEB_ADDR + 0x100u;   /* ThreadLocalStoragePointer */
+    MR32(GUEST_WORKER_TEB_ADDR + 0x30u) = GUEST_TEB_ADDR + 0x1000u;  /* Simulated PEB */
+    c->fs_base = GUEST_WORKER_TEB_ADDR;
 }
 
 void guest_cpu_init(struct CPU *c, uint32_t entry_point) {

@@ -31,6 +31,10 @@ extern "C" {
 #define GUEST_NULL_GUARD_LIMIT   0x00100000u   /* 0..1 MB guarded against nullptr */
 #define GUEST_TEB_ADDR           0x00100000u   /* Thread Environment Block */
 #define GUEST_CPU_STRUCT_ADDR    0x00104000u   /* Diagnostic / host guest CPU register structure */
+#define GUEST_WORKER_CPU_ADDR    0x00105000u   /* Worker guest CPU register structure */
+#define GUEST_WORKER_TEB_ADDR    0x00108000u   /* Worker Thread Environment Block */
+#define GUEST_WORKER_STACK_BOTTOM 0x001e0000u  /* Worker Stack Limit (64 KB) */
+#define GUEST_WORKER_STACK_TOP   0x001efff0u   /* Worker Stack Initial ESP */
 #define GUEST_STACK_BOTTOM       0x00200000u   /* Stack base (2 MB) */
 #define GUEST_STACK_TOP          0x003FF000u   /* Initial ESP (stack grows down) */
 #define GUEST_IMAGE_BASE         0x00400000u   /* PE Image Base */
@@ -48,7 +52,15 @@ extern "C" {
 #define GUEST_IMAGE_END          0x01f687e2u
 
 #define GUEST_HEAP_START         0x02000000u   /* Dynamic heap arena starts at 32 MB */
-#define GUEST_HEAP_LIMIT         GUEST_END     /* 0x28000000 (640 MB) */
+#define GUEST_HEAP_LIMIT         0x27800000u   /* Allocator upper bound (632 MB mark) */
+
+/* --------------------------------------------------------------------------
+ * Dedicated D3D9 Runtime Command Ring & COM Infrastructure Reservation
+ * Genuinely non-overlapping with dynamic heap [0x27800000..0x28000000] (8 MB)
+ * -------------------------------------------------------------------------- */
+#define GUEST_D3D9_RESERVE_START 0x27800000u   /* Dedicated D3D9 runtime reservation */
+#define GUEST_D3D9_RESERVE_END   GUEST_END     /* 0x28000000 (640 MB boundary) */
+#define GUEST_D3D9_RESERVE_SIZE  (GUEST_D3D9_RESERVE_END - GUEST_D3D9_RESERVE_START) /* 8 MB */
 
 /* --------------------------------------------------------------------------
  * Win32 VirtualAlloc Allocation Type & Protection Flags
@@ -190,6 +202,11 @@ uint32_t guest_heap_alloc(uint32_t size, uint32_t alignment);
  * Initializes the CPU execution state (stack, frame pointer, flags, control words).
  */
 void guest_cpu_init(struct CPU *c, uint32_t entry_point);
+
+/**
+ * Initializes the worker thread environment block (TEB) and thread state.
+ */
+void guest_init_worker_teb(struct CPU *c);
 
 #ifdef __cplusplus
 }

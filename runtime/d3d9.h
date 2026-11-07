@@ -32,12 +32,12 @@ extern "C" {
 #define D3D9_METHOD_BASE_VA             0x00966500u   /* 17 IDirect3D9 methods (0x00966500..0x00966540) */
 #define D3D9_DEVICE_METHOD_BASE_VA      0x00966600u   /* 119 IDirect3DDevice9 methods (0x00966600..0x009667dc) */
 
-/* Heap structures */
-#define D3D9_VTABLE_VA                  0x02001000u   /* 17 IDirect3D9 pointers (68 bytes) */
-#define D3D9_INSTANCE_VA                0x02001080u   /* IDirect3D9 instance (vptr + ref_count) */
-#define D3D9_DEVICE_VTABLE_VA           0x02001100u   /* 119 IDirect3DDevice9 pointers (476 bytes) */
-#define D3D9_DEVICE_INSTANCE_VA         0x02001300u   /* IDirect3DDevice9 instance (32 bytes) */
-#define D3D9_RING_BUFFER_VA             0x02010000u   /* Shared memory command ring buffer (4 MB) */
+/* Dedicated D3D9 reservation structures (0x27800000..0x28000000, 8 MB) */
+#define D3D9_VTABLE_VA                  0x27801000u   /* 17 IDirect3D9 pointers (68 bytes) */
+#define D3D9_INSTANCE_VA                0x27801080u   /* IDirect3D9 instance (vptr + ref_count) */
+#define D3D9_DEVICE_VTABLE_VA           0x27801100u   /* 119 IDirect3DDevice9 pointers (476 bytes) */
+#define D3D9_DEVICE_INSTANCE_VA         0x27801300u   /* IDirect3DDevice9 instance (32 bytes) */
+#define D3D9_RING_BUFFER_VA             0x27810000u   /* Shared memory command ring buffer (4 MB) */
 
 #define D3D_SDK_VERSION                 32u
 

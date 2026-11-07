@@ -49563,6 +49563,7 @@ L_006d2dc8:
 
 void sub_006d2df0(CPU *c) {
     LR_ENTER;
+    printf("[sub_006d2df0] entered\n"); fflush(stdout);
 L_006d2df0:
     PUSH32(RG_(esi));
     RG_(esi) = (uint32_t)(MR32(0xa61114u));
@@ -49591,6 +49592,7 @@ L_006d2e20:
     { uint32_t _r = (RG_(eax)) ^ (RG_(eax)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(eax) = (uint32_t)(_r); }
     { uint32_t _t; POP32(_t); RG_(esi) = (uint32_t)(_t); }
     RG_(esp) += 4u;
+    printf("[sub_006d2df0] returned 0 (not found)\n"); fflush(stdout);
     LR_STORE;
     return;
 L_006d2e25:
@@ -49598,6 +49600,7 @@ L_006d2e25:
     RG_(eax) = (uint32_t)(RG_(esi));
     { uint32_t _t; POP32(_t); RG_(esi) = (uint32_t)(_t); }
     RG_(esp) += 4u;
+    printf("[sub_006d2df0] returned node=0x%08x\n", RG_(eax)); fflush(stdout);
     LR_STORE;
     return;
 }
@@ -63490,6 +63493,7 @@ L_006dae3c:
 
 void sub_006dae50(CPU *c) {
     LR_ENTER;
+    printf("[FRAME] -> ENTERED sub_006dae50 (authentic frame tick)! arg=0x%08x\n", MR32(RG_(esp))); fflush(stdout);
 L_006dae50:
     PUSH32(0xffffffffu);
     PUSH32(0x9449adu);
@@ -64109,6 +64113,7 @@ L_006db2bd:
 
 void sub_006dba80(CPU *c) {
     LR_ENTER;
+    printf("[sub_006dba80] ENTERED main engine loop\n"); fflush(stdout);
 L_006dba80:
     { uint32_t _a = RG_(esp), _b = 0x8u, _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x00u); RG_(esp) = (uint32_t)(_r); }
     PUSH32(0x1u);
@@ -64148,8 +64153,10 @@ L_006dbab9:
     PUSH32(0x98d788u);
     PUSH32(0x006dbae3u);
     LR_STORE;
+    printf("[sub_006dba80] Calling sub_006d2df0...\n"); fflush(stdout);
     sub_006d2df0(c);
     LR_RELOAD;
+    printf("[sub_006dba80] sub_006d2df0 returned with eax=0x%08x\n", RG_(eax)); fflush(stdout);
     { uint32_t _a = RG_(esp), _b = 0xcu, _r = _a + _b; FLAGS_ADD_M(_a, _b, _r, 32, 0x00u); RG_(esp) = (uint32_t)(_r); }
     { uint32_t _r = (RG_(eax)) & (RG_(eax)); FLAGS_LOG_M(_r, 32, 0x08u); }
     if (CC_E) goto L_006dbaf3;
@@ -64186,6 +64193,7 @@ L_006dbb0d:
     LR_STORE;
     sub_00402cc0(c);
     LR_RELOAD;
+    printf("[sub_006dba80] sub_00402cc0 returned, quit_flag=0x%08x\n", MR32(0xabae68u)); fflush(stdout);
     { uint32_t _a = MR32(0xabae68u), _b = 0x0u, _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x08u); }
     if (CC_NE) goto L_006dbbd4;
 L_006dbb33:
@@ -64207,6 +64215,15 @@ L_006dbb34:
     FPOP();
     memset(&c->xmm[0], 0, 16); memcpy(&c->xmm[0], g_mem + (uint32_t)(RG_(esp)+0xcu), 4);
     { uint32_t _a = RG_(esp), _b = 0x8u, _r = _a + _b; FLAGS_ADD_M(_a, _b, _r, 32, 0x00u); RG_(esp) = (uint32_t)(_r); }
+    {
+        static int s_loop_ticks = 0;
+        if (s_loop_ticks < 5) {
+            printf("[TIMER_DIAG %d] current_QPC=0x%08x, prev_QPC=0x%08x, timer_mult=%e, delta_ms=%f\n",
+                   s_loop_ticks, RG_(esi), MR32(0xabab80u), (double)MRF32(0xb4d8e8u), (double)MRF32(RG_(esp)+0x4u));
+            fflush(stdout);
+            s_loop_ticks++;
+        }
+    }
     { uint32_t _a = RG_(esi), _b = MR32(0xabab80u), _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x08u); }
     if (CC_E) goto L_006dbb6d;
 L_006dbb5d:
@@ -64251,6 +64268,7 @@ L_006dbb9e:
     LR_RELOAD;
     PUSH32(RG_(eax));
     PUSH32(0x006dbbb3u);
+    printf("[FRAME] -> Calling sub_006dae50 with fixed_delta=0x%08x (float_ms=%f)...\n", RG_(eax), (double)MRF32(RG_(esp)+0x4u)); fflush(stdout);
     LR_STORE;
     sub_006dae50(c);
     LR_RELOAD;
@@ -67961,3 +67979,29 @@ L_006de010:
     LR_STORE;
     return;
 }
+
+
+/* --- Recovered Indirect Callbacks --- */
+void sub_006d3370(CPU *c) {
+    LR_ENTER;
+L_006d3370:
+    #if defined(__wasm_simd128__)
+WASM_SIMD_XORPS(c->xmm[0], c->xmm[0]);
+#else
+c->xmm[0].u64[0] ^= c->xmm[0].u64[0]; c->xmm[0].u64[1] ^= c->xmm[0].u64[1];
+#endif
+    RG_(eax) = (uint32_t)(RG_(ecx));
+    memcpy(g_mem + (uint32_t)(RG_(eax)), &c->xmm[0], 4);
+    memcpy(g_mem + (uint32_t)(RG_(eax)+0x4u), &c->xmm[0], 4);
+    memcpy(g_mem + (uint32_t)(RG_(eax)+0x8u), &c->xmm[0], 4);
+    memcpy(g_mem + (uint32_t)(RG_(eax)+0x14u), &c->xmm[0], 4);
+    memset(&c->xmm[0], 0, 16); memcpy(&c->xmm[0], g_mem + (uint32_t)(0x96a504u), 4);
+    memcpy(g_mem + (uint32_t)(RG_(eax)+0x18u), &c->xmm[0], 4);
+    memset(&c->xmm[0], 0, 16); memcpy(&c->xmm[0], g_mem + (uint32_t)(0x98c274u), 4);
+    MR32(RG_(eax)+0x10u) = (0x0u);
+    memcpy(g_mem + (uint32_t)(RG_(eax)+0x1cu), &c->xmm[0], 4);
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+}
+

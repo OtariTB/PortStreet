@@ -16,6 +16,7 @@
 #include <time.h>
 #include "crt.h"
 #include "memory.h"
+#include "win32.h"
 #if defined(__wasm__)
 clock_t clock(void) {
     return (clock_t)0;
@@ -188,9 +189,22 @@ void crt_shim__endthreadex(CPU *c) {
     (void)c;
 }
 void crt_shim__beginthreadex(CPU *c) {
-    uint32_t pthrd = MR32(c->esp);
-    if (pthrd) MR32(pthrd) = 0x1001;
-    c->eax = 0x1001; /* Pseudo thread handle */
+    uint32_t security      = MR32(c->esp);
+    uint32_t stack_size    = MR32(c->esp + 4);
+    uint32_t start_address = MR32(c->esp + 8);
+    uint32_t arglist       = MR32(c->esp + 12);
+    uint32_t initflag      = MR32(c->esp + 16);
+    uint32_t thrdaddr      = MR32(c->esp + 20);
+
+    (void)security;
+    uint32_t tid = 0;
+    uint32_t h = win32_create_guest_thread(start_address, arglist, stack_size, initflag, &tid);
+    if (thrdaddr) {
+        MR32(thrdaddr) = tid;
+    }
+    c->eax = h;
+
+
 }
 void crt_shim_bsearch(CPU *c) {
     uint32_t key     = MR32(c->esp);

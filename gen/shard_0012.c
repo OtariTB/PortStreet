@@ -74611,3 +74611,181 @@ L_006a68e0:
     LR_STORE;
     return;
 }
+
+
+/* --- Recovered Indirect Callbacks --- */
+void sub_006775a0(CPU *c) {
+    LR_ENTER;
+L_006775a0:
+    { uint32_t _a = RG_(ecx), _b = 0x8u, _r = _a + _b; FLAGS_ADD_M(_a, _b, _r, 32, 0x00u); RG_(ecx) = (uint32_t)(_r); }
+    LR_STORE;
+    DISPATCH_TAIL(c, 0x00673090u);
+}
+
+void sub_00679a40(CPU *c) {
+    LR_ENTER;
+L_00679a40:
+    PUSH32(RG_(esi));
+    RG_(esi) = (uint32_t)(RG_(ecx));
+    PUSH32(0x0u);
+    RG_(ecx) = (uint32_t)((RG_(esi)+0x8u));
+    MR32(RG_(esi)) = (0x0u);
+    PUSH32(0x00679a53u);
+    LR_STORE;
+    DISPATCH_CALL(c, 0x00672e70u);
+    LR_RELOAD;
+    RG_(eax) = (uint32_t)(RG_(esi));
+    { uint32_t _t; POP32(_t); RG_(esi) = (uint32_t)(_t); }
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+}
+
+void sub_00692840(CPU *c) {
+    LR_ENTER;
+L_00692840:
+    PUSH32(0xffffffffu);
+    PUSH32(0x942f56u);
+    RG_(eax) = (uint32_t)(MR32(c->fs_base));
+    PUSH32(RG_(eax));
+    PUSH32(RG_(ecx));
+    PUSH32(RG_(ebx));
+    PUSH32(RG_(esi));
+    RG_(eax) = (uint32_t)(MR32(0xa8be00u));
+    { uint32_t _r = (RG_(eax)) ^ (RG_(esp)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(eax) = (uint32_t)(_r); }
+    PUSH32(RG_(eax));
+    RG_(eax) = (uint32_t)((RG_(esp)+0x10u));
+    MR32(c->fs_base) = (RG_(eax));
+    RG_(esi) = (uint32_t)(RG_(ecx));
+    MR32(RG_(esp)+0xcu) = (RG_(esi));
+    #if defined(__wasm_simd128__)
+WASM_SIMD_XORPS(c->xmm[0], c->xmm[0]);
+#else
+c->xmm[0].u64[0] ^= c->xmm[0].u64[0]; c->xmm[0].u64[1] ^= c->xmm[0].u64[1];
+#endif
+    MR32(RG_(esi)) = (0x9827b4u);
+    { uint32_t _r = (RG_(ebx)) ^ (RG_(ebx)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(ebx) = (uint32_t)(_r); }
+    MR8(RG_(esi)+0x3f0u) = ((uint8_t)RG_(ebx));
+    memcpy(g_mem + (uint32_t)(RG_(esi)+0x3ecu), &c->xmm[0], 4);
+    PUSH32(0x00692887u);
+    LR_STORE;
+    sub_004cefb0(c);
+    LR_RELOAD;
+    MRF32(RG_(esi)+0x3e8u) = (float)ST(0);
+    FPOP();
+    #if defined(__wasm_simd128__)
+WASM_SIMD_XORPS(c->xmm[0], c->xmm[0]);
+#else
+c->xmm[0].u64[0] ^= c->xmm[0].u64[0]; c->xmm[0].u64[1] ^= c->xmm[0].u64[1];
+#endif
+    MR8(RG_(esi)+0x3fcu) = ((uint8_t)RG_(ebx));
+    memcpy(g_mem + (uint32_t)(RG_(esi)+0x3f8u), &c->xmm[0], 4);
+    PUSH32(0x006928a3u);
+    LR_STORE;
+    sub_004cefb0(c);
+    LR_RELOAD;
+    MRF32(RG_(esi)+0x3f4u) = (float)ST(0);
+    FPOP();
+    #if defined(__wasm_simd128__)
+WASM_SIMD_XORPS(c->xmm[0], c->xmm[0]);
+#else
+c->xmm[0].u64[0] ^= c->xmm[0].u64[0]; c->xmm[0].u64[1] ^= c->xmm[0].u64[1];
+#endif
+    MR8(RG_(esi)+0x408u) = ((uint8_t)RG_(ebx));
+    memcpy(g_mem + (uint32_t)(RG_(esi)+0x404u), &c->xmm[0], 4);
+    PUSH32(0x006928bfu);
+    LR_STORE;
+    sub_004cefb0(c);
+    LR_RELOAD;
+    MRF32(RG_(esi)+0x400u) = (float)ST(0);
+    FPOP();
+    #if defined(__wasm_simd128__)
+WASM_SIMD_XORPS(c->xmm[0], c->xmm[0]);
+#else
+c->xmm[0].u64[0] ^= c->xmm[0].u64[0]; c->xmm[0].u64[1] ^= c->xmm[0].u64[1];
+#endif
+    MR8(RG_(esi)+0x414u) = ((uint8_t)RG_(ebx));
+    memcpy(g_mem + (uint32_t)(RG_(esi)+0x410u), &c->xmm[0], 4);
+    PUSH32(0x006928dbu);
+    LR_STORE;
+    sub_004cefb0(c);
+    LR_RELOAD;
+    MRF32(RG_(esi)+0x40cu) = (float)ST(0);
+    FPOP();
+    #if defined(__wasm_simd128__)
+WASM_SIMD_XORPS(c->xmm[0], c->xmm[0]);
+#else
+c->xmm[0].u64[0] ^= c->xmm[0].u64[0]; c->xmm[0].u64[1] ^= c->xmm[0].u64[1];
+#endif
+    MR8(RG_(esi)+0x420u) = ((uint8_t)RG_(ebx));
+    memcpy(g_mem + (uint32_t)(RG_(esi)+0x41cu), &c->xmm[0], 4);
+    PUSH32(0x006928f7u);
+    LR_STORE;
+    sub_004cefb0(c);
+    LR_RELOAD;
+    MRF32(RG_(esi)+0x418u) = (float)ST(0);
+    FPOP();
+    #if defined(__wasm_simd128__)
+WASM_SIMD_XORPS(c->xmm[0], c->xmm[0]);
+#else
+c->xmm[0].u64[0] ^= c->xmm[0].u64[0]; c->xmm[0].u64[1] ^= c->xmm[0].u64[1];
+#endif
+    MR8(RG_(esi)+0x42cu) = ((uint8_t)RG_(ebx));
+    memcpy(g_mem + (uint32_t)(RG_(esi)+0x428u), &c->xmm[0], 4);
+    PUSH32(0x00692913u);
+    LR_STORE;
+    sub_004cefb0(c);
+    LR_RELOAD;
+    MRF32(RG_(esi)+0x424u) = (float)ST(0);
+    FPOP();
+    PUSH32(0x402cc0u);
+    PUSH32(0x65ff70u);
+    PUSH32(0x1u);
+    PUSH32(0x28u);
+    RG_(eax) = (uint32_t)((RG_(esi)+0x430u));
+    PUSH32(RG_(eax));
+    PUSH32(0x00692933u);
+    LR_STORE;
+    sub_00828652(c);
+    LR_RELOAD;
+    RG_(ecx) = (uint32_t)((RG_(esi)+0x4b0u));
+    MR32(RG_(esp)+0x18u) = (RG_(ebx));
+    PUSH32(0x00692942u);
+    LR_STORE;
+    DISPATCH_CALL(c, 0x006dcc80u);
+    LR_RELOAD;
+    #if defined(__wasm_simd128__)
+WASM_SIMD_XORPS(c->xmm[0], c->xmm[0]);
+#else
+c->xmm[0].u64[0] ^= c->xmm[0].u64[0]; c->xmm[0].u64[1] ^= c->xmm[0].u64[1];
+#endif
+    MR32(RG_(esi)+0x544u) = (RG_(ebx));
+    memcpy(g_mem + (uint32_t)(RG_(esi)+0x568u), &c->xmm[0], 4);
+    memcpy(g_mem + (uint32_t)(RG_(esi)+0x56cu), &c->xmm[0], 4);
+    RG_(ecx) = (uint32_t)(RG_(esi));
+    MR8(RG_(esp)+0x18u) = (0x1u);
+    MR32(RG_(esi)+0x548u) = (RG_(ebx));
+    PUSH32(0x0069296du);
+    LR_STORE;
+    sub_00676ec0(c);
+    LR_RELOAD;
+    MR32(RG_(esi)+0x574u) = (0x66c2c0u);
+    MR32(RG_(esi)+0x578u) = (0x68dad0u);
+    MR32(RG_(esi)+0x57cu) = (0x68dc50u);
+    MR32(RG_(esi)+0x580u) = (0x65d230u);
+    MR32(RG_(esi)+0x584u) = (0x65d5e0u);
+    MR32(RG_(esi)+0x588u) = (0x65d5e0u);
+    MR32(RG_(esi)+0x58cu) = (0x65d630u);
+    MR32(RG_(esi)+0x590u) = (0x65d1f0u);
+    RG_(eax) = (uint32_t)(RG_(esi));
+    RG_(ecx) = (uint32_t)(MR32(RG_(esp)+0x10u));
+    MR32(c->fs_base) = (RG_(ecx));
+    { uint32_t _t; POP32(_t); RG_(ecx) = (uint32_t)(_t); }
+    { uint32_t _t; POP32(_t); RG_(esi) = (uint32_t)(_t); }
+    { uint32_t _t; POP32(_t); RG_(ebx) = (uint32_t)(_t); }
+    { uint32_t _a = RG_(esp), _b = 0x10u, _r = _a + _b; FLAGS_ADD_M(_a, _b, _r, 32, 0x00u); RG_(esp) = (uint32_t)(_r); }
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+}
+

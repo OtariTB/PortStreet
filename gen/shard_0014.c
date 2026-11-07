@@ -132825,3 +132825,69 @@ L_0072361d:
     return;
 }
 
+
+
+/* --- Recovered Indirect Callbacks --- */
+void sub_007222d0(CPU *c) {
+    LR_ENTER;
+L_007222d0:
+    RG_(eax) = (uint32_t)(RG_(ecx));
+    { uint32_t _r = (RG_(ecx)) ^ (RG_(ecx)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(ecx) = (uint32_t)(_r); }
+    MR32(RG_(eax)+0x4u) = (RG_(ecx));
+    MR32(RG_(eax)+0x8u) = (RG_(ecx));
+    MR32(RG_(eax)+0xcu) = (RG_(ecx));
+    MR32(RG_(eax)) = (0x9932b8u);
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+}
+
+void sub_00722310(CPU *c) {
+    LR_ENTER;
+L_00722310:
+    RG_(eax) = (uint32_t)(RG_(ecx));
+    { uint32_t _r = (RG_(ecx)) ^ (RG_(ecx)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(ecx) = (uint32_t)(_r); }
+    MR32(RG_(eax)+0x4u) = (RG_(ecx));
+    MR32(RG_(eax)+0x8u) = (RG_(ecx));
+    MR32(RG_(eax)+0xcu) = (RG_(ecx));
+    MR32(RG_(eax)) = (0x9932d4u);
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+}
+
+void sub_00722510(CPU *c) {
+    LR_ENTER;
+L_00722510:
+    RG_(eax) = (uint32_t)(RG_(ecx));
+    { uint32_t _r = (RG_(ecx)) ^ (RG_(ecx)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(ecx) = (uint32_t)(_r); }
+    MR32(RG_(eax)+0x4u) = (RG_(ecx));
+    MR32(RG_(eax)+0x8u) = (RG_(ecx));
+    MR32(RG_(eax)+0xcu) = (RG_(ecx));
+    MR32(RG_(eax)) = (0x99330cu);
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+}
+
+void sub_00723300(CPU *c) {
+    LR_ENTER;
+L_00723300:
+    LR_STORE;
+    DISPATCH_TAIL(c, 0x00721c50u);
+}
+
+void sub_00723310(CPU *c) {
+    LR_ENTER;
+L_00723310:
+    LR_STORE;
+    DISPATCH_TAIL(c, 0x00721a70u);
+}
+
+void sub_00723320(CPU *c) {
+    LR_ENTER;
+L_00723320:
+    LR_STORE;
+    DISPATCH_TAIL(c, 0x00721a10u);
+}
+

@@ -27,11 +27,11 @@ D3DX9_D3DXMATRIXTRANSPOSE_IAT_VA = 0x009675F4
 D3D9_METHOD_BASE_VA = 0x00966500
 D3D9_DEVICE_METHOD_BASE_VA = 0x00966600
 
-D3D9_VTABLE_VA = 0x02001000
-D3D9_INSTANCE_VA = 0x02001080
-D3D9_DEVICE_VTABLE_VA = 0x02001100
-D3D9_DEVICE_INSTANCE_VA = 0x02001300
-D3D9_RING_BUFFER_VA = 0x02010000
+D3D9_VTABLE_VA = 0x27801000
+D3D9_INSTANCE_VA = 0x27801080
+D3D9_DEVICE_VTABLE_VA = 0x27801100
+D3D9_DEVICE_INSTANCE_VA = 0x27801300
+D3D9_RING_BUFFER_VA = 0x27810000
 
 D3D_SDK_VERSION = 32
 
@@ -701,6 +701,8 @@ class GuestD3D9:
 
     def init_iat(self) -> None:
         """Binds Direct3DCreate9, D3DXMatrixTranspose, IDirect3D9, and IDirect3DDevice9 into guest memory and dtab."""
+        if hasattr(self.mem, "ensure_capacity"):
+            self.mem.ensure_capacity(0x28000000)
         # 1. Bind Direct3DCreate9, D3DXVec3Transform, and D3DXMatrixTranspose IAT slots in .rdata
         self.mem.write_u32(D3D9_DIRECT3DCREATE9_IAT_VA, D3D9_DIRECT3DCREATE9_IAT_VA)
         self.dtab[D3D9_DIRECT3DCREATE9_IAT_VA] = self.shim_Direct3DCreate9
@@ -1166,7 +1168,7 @@ class GuestD3D9:
         pp_back = self.mem.read_u32(c.esp + 16)
         c.esp += 20
         if pp_back != 0:
-            self.mem.write_u32(pp_back, 0x02004000)
+            self.mem.write_u32(pp_back, 0x27804000)
         c.eax = D3D_OK
 
     def dev_shim_GetRasterStatus(self, c: Any) -> None: c.esp += 12; c.eax = D3D_OK
@@ -1190,7 +1192,7 @@ class GuestD3D9:
 
         tex_id = self.next_resource_id
         self.next_resource_id += 1
-        handle = 0x02005000 + (tex_id * 32)
+        handle = 0x27805000 + (tex_id * 32)
         self.mem.write_u32(pp_tex, handle)
 
         payload = struct.pack("<7I", tex_id, w, h, levels, usage, fmt, pool)
@@ -1214,7 +1216,7 @@ class GuestD3D9:
 
         buf_id = self.next_resource_id
         self.next_resource_id += 1
-        handle = 0x02002000 + (buf_id * 32)
+        handle = 0x27802000 + (buf_id * 32)
         self.mem.write_u32(pp_vb, handle)
 
         payload = struct.pack("<5I", buf_id, length, usage, fvf, pool)
@@ -1235,7 +1237,7 @@ class GuestD3D9:
 
         buf_id = self.next_resource_id
         self.next_resource_id += 1
-        handle = 0x02003000 + (buf_id * 32)
+        handle = 0x27803000 + (buf_id * 32)
         self.mem.write_u32(pp_ib, handle)
 
         payload = struct.pack("<5I", buf_id, length, usage, fmt, pool)
@@ -1349,7 +1351,7 @@ class GuestD3D9:
         p_tex = self.mem.read_u32(c.esp + 8)
         c.esp += 12
         self.textures[stage] = p_tex
-        tex_id = (p_tex - 0x02005000) // 32 if p_tex >= 0x02005000 else 0
+        tex_id = (p_tex - 0x27805000) // 32 if p_tex >= 0x27805000 else 0
         payload = struct.pack("<2I", stage, tex_id)
         self.ring.write_command(D3DCommandType.SET_TEXTURE, payload)
         c.eax = D3D_OK
@@ -1428,7 +1430,7 @@ class GuestD3D9:
         pp_decl = self.mem.read_u32(c.esp + 8)
         c.esp += 12
         if pp_decl != 0:
-            self.mem.write_u32(pp_decl, 0x02006000 + (self.next_resource_id * 16))
+            self.mem.write_u32(pp_decl, 0x27806000 + (self.next_resource_id * 16))
             self.next_resource_id += 1
         c.eax = D3D_OK
 
@@ -1441,7 +1443,7 @@ class GuestD3D9:
         pp_s = self.mem.read_u32(c.esp + 8)
         c.esp += 12
         if pp_s != 0:
-            self.mem.write_u32(pp_s, 0x02007000 + (self.next_resource_id * 16))
+            self.mem.write_u32(pp_s, 0x27807000 + (self.next_resource_id * 16))
             self.next_resource_id += 1
         c.eax = D3D_OK
 
@@ -1476,7 +1478,7 @@ class GuestD3D9:
         stride = self.mem.read_u32(c.esp + 16)
         c.esp += 20
 
-        buf_id = (p_vb - 0x02002000) // 32 if p_vb >= 0x02002000 else 0
+        buf_id = (p_vb - 0x27802000) // 32 if p_vb >= 0x27802000 else 0
         if stream == 0:
             self.bound_stream0_buf = buf_id
             self.bound_stream0_stride = stride
@@ -1493,7 +1495,7 @@ class GuestD3D9:
         p_ib = self.mem.read_u32(c.esp + 4)
         c.esp += 8
 
-        self.bound_indices_id = (p_ib - 0x02003000) // 32 if p_ib >= 0x02003000 else 0
+        self.bound_indices_id = (p_ib - 0x27803000) // 32 if p_ib >= 0x27803000 else 0
         payload = struct.pack("<I", self.bound_indices_id)
         self.ring.write_command(D3DCommandType.SET_INDICES, payload)
         c.eax = D3D_OK
@@ -1504,7 +1506,7 @@ class GuestD3D9:
         pp_s = self.mem.read_u32(c.esp + 8)
         c.esp += 12
         if pp_s != 0:
-            self.mem.write_u32(pp_s, 0x02008000 + (self.next_resource_id * 16))
+            self.mem.write_u32(pp_s, 0x27808000 + (self.next_resource_id * 16))
             self.next_resource_id += 1
         c.eax = D3D_OK
 

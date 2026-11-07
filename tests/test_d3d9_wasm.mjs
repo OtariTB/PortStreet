@@ -33,11 +33,11 @@ const D3D9_RING_HEADER_SIZE = 64;
 const D3D9_METHOD_BASE_VA = 0x00966500;
 const D3D9_DEVICE_METHOD_BASE_VA = 0x00966600;
 
-const D3D9_VTABLE_VA = 0x02001000;
-const D3D9_INSTANCE_VA = 0x02001080;
-const D3D9_DEVICE_VTABLE_VA = 0x02001100;
-const D3D9_DEVICE_INSTANCE_VA = 0x02001300;
-const D3D9_RING_BUFFER_VA = 0x02010000;
+const D3D9_VTABLE_VA = 0x27801000;
+const D3D9_INSTANCE_VA = 0x27801080;
+const D3D9_DEVICE_VTABLE_VA = 0x27801100;
+const D3D9_DEVICE_INSTANCE_VA = 0x27801300;
+const D3D9_RING_BUFFER_VA = 0x27810000;
 
 const D3D_OK = 0x00000000;
 
@@ -535,6 +535,10 @@ async function run() {
 
   const { instance } = await WebAssembly.instantiate(wasmBytes, imports);
   inst = instance;
+  if (inst.exports.memory.buffer.byteLength < 0x28000000) {
+    const pagesNeeded = Math.ceil((0x28000000 - inst.exports.memory.buffer.byteLength) / 65536);
+    inst.exports.memory.grow(pagesNeeded);
+  }
   const mem = new Uint8Array(inst.exports.memory.buffer);
   const view = new DataView(inst.exports.memory.buffer);
 

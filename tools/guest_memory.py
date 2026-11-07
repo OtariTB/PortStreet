@@ -23,6 +23,9 @@ from typing import Sequence
 IMAGE_BASE = 0x00400000
 GUEST_MEMORY_LIMIT = 0x28000000  # 640 MB
 HEAP_START = 0x02000000          # 32 MB mark
+HEAP_LIMIT = 0x27800000          # Allocator upper bound (632 MB, leaves 8 MB D3D9 reservation)
+D3D9_RESERVE_START = 0x27800000
+D3D9_RESERVE_END = 0x28000000
 STACK_TOP = 0x003FF000           # Initial ESP
 
 
@@ -124,6 +127,15 @@ class GuestMemory:
         self.image_base: int = 0
         self.heap_cur: int = HEAP_START
 
+    def ensure_capacity(self, min_capacity: int) -> None:
+        if min_capacity > GUEST_MEMORY_LIMIT:
+            raise MemoryLoaderError(f"Capacity 0x{min_capacity:08x} exceeds limit 0x{GUEST_MEMORY_LIMIT:08x}")
+        if min_capacity > self.size:
+            new_size = (min_capacity + 0x00FFFFFF) & ~0x00FFFFFF
+            new_size = min(new_size, GUEST_MEMORY_LIMIT)
+            self.buffer.extend(b"\x00" * (new_size - self.size))
+            self.size = new_size
+
     def check_bounds(self, va: int, length: int) -> None:
         if va < 0 or va + length > self.size:
             raise MemoryLoaderError(f"Guest access 0x{va:08x}..0x{va+length:08x} exceeds bounds (0..0x{self.size:08x})")
@@ -224,6 +236,8 @@ class GuestMemory:
             target_va = self.heap_cur
             self.heap_cur += aligned_size
 
+        if target_va + aligned_size > HEAP_LIMIT:
+            raise MemoryLoaderError("VirtualAlloc exceeded reservation limit")
         if target_va + aligned_size > self.size:
             new_size = (target_va + aligned_size + 0x00FFFFFF) & ~0x00FFFFFF
             if new_size > GUEST_MEMORY_LIMIT:
@@ -241,6 +255,8 @@ class GuestMemory:
         self.heap_cur = (self.heap_cur + (alignment - 1)) & ~(alignment - 1)
         va = self.heap_cur
         self.heap_cur += size
+        if va + size > HEAP_LIMIT:
+            raise MemoryLoaderError("Heap exceeded reservation limit")
         if va + size > self.size:
             new_size = (va + size + 0x00FFFFFF) & ~0x00FFFFFF
             if new_size > GUEST_MEMORY_LIMIT:

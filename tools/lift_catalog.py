@@ -1300,6 +1300,43 @@ class FunctionLifter:
                 return (target, True)
         return (dest, False)
 
+    def resolve_jump_table(
+        self, ins: Any, block_starts: set[int], func_entry: int
+    ) -> tuple[int, str, list[int]] | None:
+        """Resolve an intra-function indirect jump table.
+
+        Returns (table_va, idx_reg_name, target_entries) if valid, or None.
+        A jump table is only recognized if:
+        1. It is an indirect memory jump with scale == 4, non-zero disp (table VA), non-zero index, and base == 0.
+        2. Consecutive 4-byte entries from table_va resolve to basic block starts of the current function.
+        3. At least 2 entries are present.
+        """
+        if ins.mnemonic != "jmp" or not ins.operands:
+            return None
+        op = ins.operands[0]
+        if op.type != CS_OP_MEM:
+            return None
+        mem = op.mem
+        if mem.scale != 4 or mem.disp == 0 or mem.index == 0 or mem.base != 0:
+            return None
+        table_va = mem.disp
+        idx_reg = self.cs.reg_name(mem.index)
+        if not idx_reg:
+            return None
+        entries: list[int] = []
+        for k in range(256):
+            raw_val = self.read_bytes(table_va + k * 4, 4)
+            if len(raw_val) < 4:
+                break
+            target_va = struct.unpack("<I", raw_val)[0]
+            if target_va in block_starts:
+                entries.append(target_va)
+            else:
+                break
+        if len(entries) < 2:
+            return None
+        return table_va, idx_reg, entries
+
     def read_bytes(self, va: int, size: int) -> bytes:
         off = va_to_offset(va)
         if off < 0 or off + size > len(self.raw_exe):
@@ -1672,10 +1709,24 @@ class FunctionLifter:
                                 lines.append("    LR_STORE;")
                             lines.append(f"    DISPATCH_TAIL(c, 0x{dest:08x}u);")
                     elif ins.operands and ins.operands[0].type == CS_OP_MEM:
-                        ea = self.lifter.ea(ins.operands[0].mem)
-                        if enable_lregs:
-                            lines.append("    LR_STORE;")
-                        lines.append(f"    DISPATCH_TAIL(c, MR32{ea});")
+                        jt_info = self.resolve_jump_table(ins, block_starts, func_entry)
+                        if jt_info is not None:
+                            table_va, idx_reg, entries = jt_info
+                            reg_expr = self.lifter._reg_name(idx_reg)
+                            lines.append(f"    /* Recovered intra-function jump table 0x{table_va:08x} ({len(entries)} targets) */")
+                            lines.append(f"    switch ({reg_expr}) {{")
+                            for e_idx, t_va in enumerate(entries):
+                                lines.append(f"        case {e_idx}: goto L_{t_va:08x};")
+                            lines.append("        default:")
+                            lines.append(f'            fprintf(stderr, "[JUMP_TABLE] FATAL: Out-of-bounds selector %u for table 0x{table_va:08x}u in sub_{func_entry:08x}\\n", (unsigned){reg_expr});')
+                            lines.append("            fflush(stderr);")
+                            lines.append("            __builtin_trap();")
+                            lines.append("    }")
+                        else:
+                            ea = self.lifter.ea(ins.operands[0].mem)
+                            if enable_lregs:
+                                lines.append("    LR_STORE;")
+                            lines.append(f"    DISPATCH_TAIL(c, MR32{ea});")
                     else:
                         rd_expr = self.lifter.rd(ins.operands[0])
                         if enable_lregs:

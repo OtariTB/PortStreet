@@ -65081,3 +65081,22 @@ L_007d8030:
     LR_STORE;
     return;
 }
+
+
+/* --- Recovered Indirect Callbacks --- */
+void sub_007cb590(CPU *c) {
+    LR_ENTER;
+L_007cb590:
+    RG_(eax) = (uint32_t)(RG_(ecx));
+    { uint32_t _r = (RG_(ecx)) ^ (RG_(ecx)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(ecx) = (uint32_t)(_r); }
+    MR8(RG_(eax)) = ((uint8_t)RG_(ecx));
+    MR8(RG_(eax)+0x1u) = ((uint8_t)RG_(ecx));
+    MR8(RG_(eax)+0x4u) = ((uint8_t)RG_(ecx));
+    MR16(RG_(eax)+0xeu) = ((uint16_t)RG_(ecx));
+    MR8(RG_(eax)+0x14u) = ((uint8_t)RG_(ecx));
+    MR16(RG_(eax)+0x1eu) = ((uint16_t)RG_(ecx));
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+}
+

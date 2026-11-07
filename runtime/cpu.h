@@ -27,13 +27,13 @@ extern "C" {
  * -------------------------------------------------------------------------- */
 #if defined(__GNUC__) || defined(__clang__)
 typedef uint16_t __attribute__((may_alias)) gm_u16;
-typedef uint32_t __attribute__((may_alias)) gm_u32;
+typedef volatile uint32_t __attribute__((may_alias)) gm_u32;
 typedef uint64_t __attribute__((may_alias)) gm_u64;
 typedef float    __attribute__((may_alias)) gm_f32;
 typedef double   __attribute__((may_alias)) gm_f64;
 #else
 typedef uint16_t gm_u16;
-typedef uint32_t gm_u32;
+typedef volatile uint32_t gm_u32;
 typedef uint64_t gm_u64;
 typedef float    gm_f32;
 typedef double   gm_f64;

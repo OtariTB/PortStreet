@@ -54,7 +54,8 @@ class TestD3D9Unit(unittest.TestCase):
     """Unit tests for Direct3D 9 COM interface shim."""
 
     def setUp(self):
-        self.mem = GuestMemory()
+        from tools.guest_memory import GUEST_MEMORY_LIMIT
+        self.mem = GuestMemory(size=GUEST_MEMORY_LIMIT)
         self.cpu = SimulatedCPU(self.mem)
         self.d3d9 = GuestD3D9(self.mem)
         self.d3d9.init_iat()
@@ -201,12 +202,38 @@ class TestD3D9Unit(unittest.TestCase):
             self.assertEqual(self.cpu.esp, 0x003FE004)
 
     def test_heap_memory_residency_and_text_integrity(self):
-        """Verifies COM vtables and instances reside in heap (0x02001000+) without corrupting .text."""
+        """Verifies COM vtables and instances reside in heap (0x27801000+) without corrupting .text."""
         self.assertGreaterEqual(D3D9_VTABLE_VA, 0x02000000)
         self.assertGreaterEqual(D3D9_INSTANCE_VA, 0x02000000)
         self.assertGreaterEqual(D3D9_DEVICE_VTABLE_VA, 0x02000000)
         self.assertGreaterEqual(D3D9_DEVICE_INSTANCE_VA, 0x02000000)
         self.assertGreaterEqual(D3D9_RING_BUFFER_VA, 0x02000000)
+
+        # Dedicated reservation checks
+        self.assertGreaterEqual(D3D9_VTABLE_VA, 0x27800000)
+        self.assertGreaterEqual(D3D9_RING_BUFFER_VA, 0x27800000)
+        self.assertLessEqual(D3D9_RING_BUFFER_VA + (4 * 1024 * 1024) + 64, 0x28000000)
+
+    def test_d3d9_command_ring_heap_isolation_no_overlap(self):
+        """Verifies that the D3D9 command ring buffer is strictly isolated in dedicated reservation (0x27800000..0x28000000)
+        and that the dynamic heap allocator cannot enter or overlap the command ring."""
+        from tools.guest_memory import HEAP_START, HEAP_LIMIT, D3D9_RESERVE_START, D3D9_RESERVE_END, MemoryLoaderError
+        self.assertEqual(D3D9_RESERVE_START, 0x27800000)
+        self.assertEqual(D3D9_RESERVE_END, 0x28000000)
+        self.assertEqual(HEAP_LIMIT, D3D9_RESERVE_START)
+
+        # D3D9 ring buffer must be inside the dedicated reservation
+        self.assertGreaterEqual(D3D9_RING_BUFFER_VA, D3D9_RESERVE_START)
+        ring_end = D3D9_RING_BUFFER_VA + 64 + (4 * 1024 * 1024)
+        self.assertLessEqual(ring_end, D3D9_RESERVE_END)
+
+        # Allocator must not enter the reservation
+        self.mem.heap_cur = HEAP_LIMIT - 1024
+        with self.assertRaises(MemoryLoaderError):
+            self.mem.heap_alloc(2048)
+
+        with self.assertRaises(MemoryLoaderError):
+            self.mem.virtual_alloc(0, 0x10000)
 
         # Check authentic executable range (0x00401000..0x00966000) has zero writes
         for va in (0x00401000, 0x0070E1C8, 0x0080AC64, 0x00965FFF):

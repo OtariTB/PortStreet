@@ -186,19 +186,45 @@ class CatalogBuilder:
             if self.in_code(target):
                 seeds.add(target)
 
-        # 6. Indirect constructor callbacks passed as immediate arguments to __ehvec_ctor (sub_00401000)
+        # 6. Indirect constructor and destructor callbacks passed to iterator routines
         text_off = va_to_offset(self.text_va)
         text_data = self.raw_exe[text_off : text_off + self.text_size]
+        iterator_targets = {0x00401000, 0x00828652, 0x0082858A}
         for i in range(len(text_data) - 5):
             if text_data[i] == 0xE8:
                 rel = struct.unpack_from('<i', text_data, i + 1)[0]
-                if self.text_va + i + 5 + rel == 0x00401000:
-                    for back in range(1, 35):
-                        pos = i - back
-                        if pos >= 0 and text_data[pos] == 0x68:
-                            imm = struct.unpack_from('<I', text_data, pos + 1)[0]
-                            if self.in_code(imm):
-                                seeds.add(imm)
+                target_fn = self.text_va + i + 5 + rel
+                if target_fn in iterator_targets:
+                    site_va = self.text_va + i
+                    pre_bytes = text_data[max(0, i - 50) : i]
+                    pre_va = site_va - len(pre_bytes)
+                    try:
+                        insns = list(self.cs.disasm(pre_bytes, pre_va))
+                    except Exception:
+                        insns = []
+                    pushes = []
+                    for ins in reversed(insns):
+                        if ins.mnemonic.startswith("push"):
+                            pushes.append(ins)
+                        elif ins.mnemonic in ("call", "ret"):
+                            break
+                        if len(pushes) >= 5:
+                            break
+
+                    if target_fn in (0x00401000, 0x00828652):
+                        if len(pushes) >= 4 and pushes[3].operands and pushes[3].operands[0].type == X86_OP_IMM:
+                            ctor = pushes[3].operands[0].imm
+                            if self.in_code(ctor):
+                                seeds.add(ctor)
+                        if len(pushes) >= 5 and pushes[4].operands and pushes[4].operands[0].type == X86_OP_IMM:
+                            dtor = pushes[4].operands[0].imm
+                            if self.in_code(dtor):
+                                seeds.add(dtor)
+                    elif target_fn == 0x0082858A:
+                        if len(pushes) >= 4 and pushes[3].operands and pushes[3].operands[0].type == X86_OP_IMM:
+                            dtor = pushes[3].operands[0].imm
+                            if self.in_code(dtor):
+                                seeds.add(dtor)
 
         return seeds
 

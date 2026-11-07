@@ -49,9 +49,9 @@ static uint8_t  g_key_state[256];
 
 static uint32_t alloc_handle(uint32_t type, const char *name) {
     for (uint32_t i = 0x10; i < MAX_WIN32_HANDLES; ++i) {
-        if (g_handles[i].type == HANDLE_FREE) {
-            g_handles[i].type = type;
-            g_handles[i].state = 0;
+        uint32_t expected = HANDLE_FREE;
+        if (__atomic_compare_exchange_n(&g_handles[i].type, &expected, type, false, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+            __atomic_store_n(&g_handles[i].state, 0, __ATOMIC_RELEASE);
             g_handles[i].extra = 0;
             if (name) strncpy(g_handles[i].name, name, 63);
             return (i << 2) | 0x01; /* Pseudo-Win32 handle */
@@ -86,7 +86,8 @@ void win32_shim_SuspendThread(CPU *c) {
     c->esp += 4;
 }
 void win32_shim_ResumeThread(CPU *c) {
-    c->eax = 1;
+    uint32_t h = MR32(c->esp);
+    c->eax = win32_resume_guest_thread(h);
     c->esp += 4;
 }
 void win32_shim_GetVersionExA(CPU *c) {
@@ -287,6 +288,23 @@ void win32_shim_InitializeCriticalSection(CPU *c) {
     c->esp += 4;
 }
 void win32_shim_WaitForSingleObject(CPU *c) {
+    uint32_t h = MR32(c->esp);
+    uint32_t timeout = MR32(c->esp + 4);
+    uint32_t idx = h >> 2;
+    if (idx < MAX_WIN32_HANDLES && (g_handles[idx].type == HANDLE_EVENT || g_handles[idx].type == HANDLE_THREAD)) {
+        while (__atomic_load_n(&g_handles[idx].state, __ATOMIC_ACQUIRE) == 0) {
+            if (timeout == 0) {
+                c->eax = 0x102; /* WAIT_TIMEOUT */
+                c->esp += 8;
+                return;
+            }
+#ifdef __wasm__
+            __builtin_wasm_memory_atomic_wait32((int *)&g_handles[idx].state, 0, -1);
+#else
+            break;
+#endif
+        }
+    }
     c->eax = 0; /* WAIT_OBJECT_0 */
     c->esp += 8;
 }
@@ -412,6 +430,14 @@ void win32_shim_QueryPerformanceFrequency(CPU *c) {
     c->esp += 4;
 }
 void win32_shim_SetEvent(CPU *c) {
+    uint32_t h = MR32(c->esp);
+    uint32_t idx = h >> 2;
+    if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_EVENT) {
+        __atomic_store_n(&g_handles[idx].state, 1, __ATOMIC_RELEASE);
+#ifdef __wasm__
+        __builtin_wasm_memory_atomic_notify((int *)&g_handles[idx].state, 1);
+#endif
+    }
     c->eax = 1;
     c->esp += 4;
 }
@@ -595,6 +621,11 @@ void win32_shim_GetCurrentDirectoryA(CPU *c) {
     c->esp += 8;
 }
 void win32_shim_ResetEvent(CPU *c) {
+    uint32_t h = MR32(c->esp);
+    uint32_t idx = h >> 2;
+    if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_EVENT) {
+        __atomic_store_n(&g_handles[idx].state, 0, __ATOMIC_RELEASE);
+    }
     c->eax = 1;
     c->esp += 4;
 }
@@ -1352,4 +1383,193 @@ void win32_init_iat(void) {
             g_dtab[idx] = g_win32_imports[i].handler;
         }
     }
+}
+
+uint32_t win32_create_event(void) {
+    return alloc_handle(HANDLE_EVENT, "GuestEvent");
+}
+
+void win32_signal_event(uint32_t h) {
+    uint32_t idx = h >> 2;
+    if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_EVENT) {
+        __atomic_store_n(&g_handles[idx].state, 1, __ATOMIC_RELEASE);
+#ifdef __wasm__
+        __builtin_wasm_memory_atomic_notify((int *)&g_handles[idx].state, 1);
+#endif
+    }
+}
+
+void win32_reset_event(uint32_t h) {
+    uint32_t idx = h >> 2;
+    if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_EVENT) {
+        __atomic_store_n(&g_handles[idx].state, 0, __ATOMIC_RELEASE);
+    }
+}
+
+uint32_t win32_get_event_state_addr(uint32_t h) {
+    uint32_t idx = h >> 2;
+    if (idx < MAX_WIN32_HANDLES) {
+        return (uint32_t)(uintptr_t)&g_handles[idx].state;
+    }
+    return 0;
+}
+
+/* --------------------------------------------------------------------------
+ * Guest Thread Manager & Worker Execution Loop
+ * -------------------------------------------------------------------------- */
+#define MAX_GUEST_THREADS 4
+static guest_thread_desc_t g_guest_threads[MAX_GUEST_THREADS];
+static uint32_t g_guest_thread_count = 0;
+
+/* Worker thread execution signal:
+ * 0 = idle / waiting
+ * 1 = run active thread
+ * 2 = shutdown worker
+ */
+static volatile uint32_t g_worker_signal = 0;
+static volatile uint32_t g_active_thread_idx = 0;
+
+uint32_t win32_create_guest_thread(uint32_t start_addr, uint32_t arglist, uint32_t stack_sz, uint32_t initflag, uint32_t *out_tid) {
+    if (g_guest_thread_count >= MAX_GUEST_THREADS) return 0;
+    uint32_t idx = g_guest_thread_count++;
+    guest_thread_desc_t *th = &g_guest_threads[idx];
+
+    uint32_t h = alloc_handle(HANDLE_THREAD, "GuestWorkerThread");
+    uint32_t slot = h >> 2;
+    if (slot < MAX_WIN32_HANDLES) {
+        g_handles[slot].extra = idx;
+    }
+
+    uint32_t tid = 0x2001u + idx;
+    if (out_tid) *out_tid = tid;
+
+    th->handle = h;
+    th->thread_id = tid;
+    th->start_address = start_addr;
+    th->arglist = arglist;
+    th->stack_size = stack_sz;
+    th->initflag = initflag;
+    th->cpu_va = GUEST_WORKER_CPU_ADDR;
+    th->stack_top_va = GUEST_WORKER_STACK_TOP;
+    th->suspended = (initflag & 4u) ? 1u : 0u; /* CREATE_SUSPENDED = 4 */
+    th->active = 1u;
+
+    printf("[THREAD] CREATED: handle=0x%x, tid=0x%x, entry=0x%08x, arglist=0x%08x, suspended=%u\n",
+           h, tid, start_addr, arglist, th->suspended);
+    fflush(stdout);
+
+    if (th->suspended) {
+        printf("[THREAD] SUSPENDED: handle=0x%x holding execution pending ResumeThread\n", h);
+        fflush(stdout);
+    }
+
+    CPU *wcpu = (CPU *)(g_mem + th->cpu_va);
+    guest_init_worker_teb(wcpu);
+
+    /* Setup worker stack:
+     * [esp + 4] = arglist
+     * [esp]     = 0x00897709 (return address)
+     */
+    MR32(th->stack_top_va - 4u) = arglist;
+    MR32(th->stack_top_va - 8u) = 0x00897709u;
+
+    wcpu->esp = th->stack_top_va - 8u;
+    wcpu->eip = start_addr;
+
+    g_active_thread_idx = idx;
+
+    /* If not suspended, activate immediately */
+    if (!th->suspended) {
+        __atomic_store_n(&g_worker_signal, 1u, __ATOMIC_RELEASE);
+#ifdef __wasm__
+        __builtin_wasm_memory_atomic_notify((int *)&g_worker_signal, 1);
+#endif
+    }
+
+    return h;
+}
+
+uint32_t win32_resume_guest_thread(uint32_t hThread) {
+    uint32_t slot = hThread >> 2;
+    if (slot < MAX_WIN32_HANDLES && g_handles[slot].type == HANDLE_THREAD) {
+        uint32_t idx = g_handles[slot].extra;
+        if (idx < g_guest_thread_count && g_guest_threads[idx].active) {
+            uint32_t prev = g_guest_threads[idx].suspended;
+            if (prev > 0) {
+                g_guest_threads[idx].suspended = 0;
+                g_active_thread_idx = idx;
+                printf("[THREAD] RESUMED: handle=0x%x, waking worker thread (prev_suspend=%u)\n", hThread, prev);
+                fflush(stdout);
+                __atomic_store_n(&g_worker_signal, 1u, __ATOMIC_RELEASE);
+#ifdef __wasm__
+                __builtin_wasm_memory_atomic_notify((int *)&g_worker_signal, 1);
+#endif
+            }
+            return prev;
+        }
+    }
+    return 0;
+}
+
+const guest_thread_desc_t *win32_get_guest_thread(uint32_t hThread) {
+    uint32_t slot = hThread >> 2;
+    if (slot < MAX_WIN32_HANDLES && g_handles[slot].type == HANDLE_THREAD) {
+        uint32_t idx = g_handles[slot].extra;
+        if (idx < g_guest_thread_count && g_guest_threads[idx].active) {
+            return &g_guest_threads[idx];
+        }
+    }
+    return NULL;
+}
+
+void guest_worker_thread_run(uint32_t cpu_va) {
+    CPU *c = (CPU *)(g_mem + cpu_va);
+    guest_init_worker_teb(c);
+
+    while (1) {
+        while (__atomic_load_n(&g_worker_signal, __ATOMIC_ACQUIRE) == 0) {
+#ifdef __wasm__
+            __builtin_wasm_memory_atomic_wait32((int *)&g_worker_signal, 0, -1);
+#else
+            break;
+#endif
+        }
+
+        uint32_t sig = __atomic_load_n(&g_worker_signal, __ATOMIC_ACQUIRE);
+        if (sig == 2u) {
+            /* Shutdown signal */
+            break;
+        }
+
+        /* Consume signal */
+        __atomic_store_n(&g_worker_signal, 0u, __ATOMIC_RELEASE);
+
+        uint32_t idx = g_active_thread_idx;
+        if (idx < g_guest_thread_count && g_guest_threads[idx].active) {
+            uint32_t entry = g_guest_threads[idx].start_address;
+            if (entry) {
+                printf("[THREAD] ENTRY_ENTERED: executing start_address=0x%08x on worker CPU\n", entry);
+                fflush(stdout);
+                dispatch_indirect(c, entry);
+                printf("[THREAD] EXITED: entry 0x%08x completed execution\n", entry);
+                fflush(stdout);
+            }
+            /* If the entry returned, thread has completed execution */
+            uint32_t h = g_guest_threads[idx].handle;
+            uint32_t slot = h >> 2;
+            if (slot < MAX_WIN32_HANDLES) {
+                __atomic_store_n(&g_handles[slot].state, 1, __ATOMIC_RELEASE);
+#ifdef __wasm__
+                __builtin_wasm_memory_atomic_notify((int *)&g_handles[slot].state, 1);
+#endif
+            }
+        }
+    }
+}
+
+void guest_worker_thread_stop(void) {
+    __atomic_store_n(&g_worker_signal, 2u, __ATOMIC_RELEASE);
+#ifdef __wasm__
+    __builtin_wasm_memory_atomic_notify((int *)&g_worker_signal, 1);
+#endif
 }

@@ -62262,6 +62262,24 @@ L_0092e25e:
     return;
 }
 
+void sub_0092e287(CPU *c) {
+    LR_ENTER;
+L_0092e287:
+    PUSH32(RG_(ebp));
+    RG_(ebp) = (uint32_t)(RG_(esp));
+    RG_(eax) = (uint32_t)(MR32(RG_(ebp)+0x8u));
+    PUSH32(0xffffffffu);
+    PUSH32(MR32(RG_(eax)+0x4u));
+    PUSH32(0x0092e298u);
+    LR_STORE;
+    DISPATCH_CALL(c, MR32(0x9670dcu));
+    LR_RELOAD;
+    { uint32_t _t; POP32(_t); RG_(ebp) = (uint32_t)(_t); }
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+}
+
 void sub_0092e2d5(CPU *c) {
     LR_ENTER;
 L_0092e2d5:

@@ -85022,3 +85022,19 @@ L_005d5a11:
     LR_STORE;
     return;
 }
+
+
+/* --- Recovered Indirect Callbacks --- */
+void sub_005b4590(CPU *c) {
+    LR_ENTER;
+L_005b4590:
+    RG_(eax) = (uint32_t)(RG_(ecx));
+    { uint32_t _r = (RG_(ecx)) ^ (RG_(ecx)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(ecx) = (uint32_t)(_r); }
+    MR32(RG_(eax)+0x8u) = (RG_(ecx));
+    MR32(RG_(eax)) = (RG_(eax));
+    MR32(RG_(eax)+0x4u) = (RG_(eax));
+    RG_(esp) += 4u;
+    LR_STORE;
+    return;
+}
+

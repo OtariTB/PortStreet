@@ -68,7 +68,7 @@ class TestD3D9WasmIntegration(unittest.TestCase):
         fn0 = report["functionsExecuted"][0]
         self.assertEqual(fn0["name"], "sub_0070e150")
         self.assertEqual(fn0["address"], "0x0070e150")
-        self.assertEqual(fn0["storedDirect3D9"], "0x02001080")
+        self.assertEqual(fn0["storedDirect3D9"], "0x27801080")
         self.assertIn("Direct3DCreate9(SDKVersion=32)", fn0["callsMade"])
         self.assertTrue(any("GetDeviceCaps" in c for c in fn0["callsMade"]))
         self.assertTrue(any("GetAdapterIdentifier" in c for c in fn0["callsMade"]))
@@ -76,7 +76,7 @@ class TestD3D9WasmIntegration(unittest.TestCase):
         fn1 = report["functionsExecuted"][1]
         self.assertEqual(fn1["name"], "sub_00705d30")
         self.assertEqual(fn1["address"], "0x00705d30")
-        self.assertEqual(fn1["storedDevice"], "0x02001300")
+        self.assertEqual(fn1["storedDevice"], "0x27801300")
         self.assertEqual(fn1["returnValue"], "0x00000000 (D3D_OK)")
         self.assertTrue(any("CreateDevice" in c for c in fn1["callsMade"]))
         self.assertTrue(any("BeginScene" in c for c in fn1["callsMade"]))
