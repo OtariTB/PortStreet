@@ -36,24 +36,129 @@ typedef struct {
 } win32_handle_t;
 
 static win32_handle_t g_handles[MAX_WIN32_HANDLES];
-static uint32_t g_tls_slots[64];
-static uint32_t g_tls_bitmap = 0;
-static uint32_t g_wnd_proc = 0;
-static uint32_t g_win_width = 1280;
-static uint32_t g_win_height = 720;
+static FILE          *g_win32_files[MAX_WIN32_HANDLES];
+static uint32_t       g_file_lock = 0;
+static uint32_t       g_io_log_count = 0;
+static uint32_t       g_sleep_dummy = 0;
+static uint32_t       g_tls_slots[64];
+static uint64_t       g_tls_bitmap = 0;
+static uint32_t       g_wnd_proc = 0;
+static uint32_t       g_win_width = 1280;
+static uint32_t       g_win_height = 720;
 #define WIN32_MSG_QUEUE_CAPACITY 64u
 static uint32_t g_msg_queue[WIN32_MSG_QUEUE_CAPACITY][4]; /* (hwnd, msg, wParam, lParam) */
 static uint32_t g_msg_head = 0;
 static uint32_t g_msg_tail = 0;
 static uint8_t  g_key_state[256];
 
+static inline void file_lock_acquire(void) {
+    while (1) {
+        uint32_t exp = 0u;
+        if (PS_HOST_ATOMIC_CAS32(&g_file_lock, &exp, 1u)) return;
+        PS_WASM_HOST_WAIT32(&g_file_lock, 1u, 1000000ll);
+    }
+}
+
+static inline void file_lock_release(void) {
+    PS_HOST_ATOMIC_STORE32(&g_file_lock, 0u);
+    PS_WASM_HOST_NOTIFY(&g_file_lock, 1u);
+}
+
+static inline uint32_t w32_current_tid(const CPU *c) {
+    if (c && c->fs_base >= GUEST_NULL_GUARD_LIMIT && c->fs_base + 0x40u <= GUEST_HEAP_LIMIT) {
+        uint32_t tid = MR32(c->fs_base + 0x24u);
+        if (tid != 0u) return tid;
+    }
+    return 1000u;
+}
+
+static inline void w32_set_last_error(CPU *c, uint32_t err) {
+    if (c && c->fs_base >= GUEST_NULL_GUARD_LIMIT && c->fs_base + 0x40u <= GUEST_HEAP_LIMIT) {
+        MR32(c->fs_base + 0x34u) = err;
+    }
+}
+
+static inline uint32_t w32_get_last_error(const CPU *c) {
+    if (c && c->fs_base >= GUEST_NULL_GUARD_LIMIT && c->fs_base + 0x40u <= GUEST_HEAP_LIMIT) {
+        return MR32(c->fs_base + 0x34u);
+    }
+    return 0u;
+}
+
+FILE *win32_open_game_file(const char *guest_path, bool read_only) {
+    if (!guest_path || !guest_path[0]) return NULL;
+
+    const char *game_dir = getenv("PROSTREET_GAME_DIR");
+    /* Never permit mutating files inside the read-only game directory */
+    if (!read_only && game_dir && game_dir[0]) {
+        return NULL;
+    }
+
+    const char *p = guest_path;
+    while (*p == ' ' || *p == '\t') p++;
+    if (p[0] == '.' && (p[1] == '\\' || p[1] == '/')) p += 2;
+
+    /* Strip Windows drive or prefix if path points into game folder */
+    const char *marker = strstr(p, "Need For Spped - Pro Street");
+    if (marker) {
+        p = marker + strlen("Need For Spped - Pro Street");
+        while (*p == '\\' || *p == '/') p++;
+    } else if (((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':') {
+        if (game_dir && game_dir[0]) {
+            p += 2;
+            while (*p == '\\' || *p == '/') p++;
+        }
+    }
+
+    if (strstr(p, "..") != NULL) {
+        return NULL;
+    }
+
+    if (game_dir && game_dir[0]) {
+        char rel[260];
+        size_t rlen = 0;
+        char sep = (game_dir[0] == '/') ? '/' : '\\';
+        for (size_t i = 0; p[i] && rlen + 1 < sizeof(rel); ++i) {
+            char ch = p[i];
+            if (ch == '\\' || ch == '/') ch = sep;
+            rel[rlen++] = ch;
+        }
+        rel[rlen] = '\0';
+
+        char full[520];
+        snprintf(full, sizeof(full), "%s%c%s", game_dir, sep, rel);
+        FILE *fp = fopen(full, "rb");
+        if (fp) return fp;
+
+        /* Case-normalized fallback (UPPERCASE / lowercase) for case-sensitive VFS */
+        for (size_t i = 0; i < rlen; ++i) {
+            if (rel[i] >= 'a' && rel[i] <= 'z') rel[i] = (char)(rel[i] - 'a' + 'A');
+        }
+        snprintf(full, sizeof(full), "%s%c%s", game_dir, sep, rel);
+        fp = fopen(full, "rb");
+        if (fp) return fp;
+
+        for (size_t i = 0; i < rlen; ++i) {
+            if (rel[i] >= 'A' && rel[i] <= 'Z') rel[i] = (char)(rel[i] - 'A' + 'a');
+        }
+        snprintf(full, sizeof(full), "%s%c%s", game_dir, sep, rel);
+        return fopen(full, "rb");
+    }
+
+    return fopen(guest_path, read_only ? "rb" : "wb");
+}
+
 static uint32_t alloc_handle(uint32_t type, const char *name) {
     for (uint32_t i = 0x10; i < MAX_WIN32_HANDLES; ++i) {
         uint32_t expected = HANDLE_FREE;
-        if (__atomic_compare_exchange_n(&g_handles[i].type, &expected, type, false, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
-            __atomic_store_n(&g_handles[i].state, 0, __ATOMIC_RELEASE);
+        if (PS_HOST_ATOMIC_CAS32(&g_handles[i].type, &expected, type)) {
+            PS_HOST_ATOMIC_STORE32(&g_handles[i].state, 0);
             g_handles[i].extra = 0;
-            if (name) strncpy(g_handles[i].name, name, 63);
+            g_handles[i].name[0] = '\0';
+            if (name) {
+                strncpy(g_handles[i].name, name, 63);
+                g_handles[i].name[63] = '\0';
+            }
             return (i << 2) | 0x01; /* Pseudo-Win32 handle */
         }
     }
@@ -155,6 +260,11 @@ void win32_shim_GetSystemInfo(CPU *c) {
     c->esp += 4;
 }
 void win32_shim_Sleep(CPU *c) {
+    uint32_t ms = MR32(c->esp);
+    if (ms > 0u) {
+        long long ns = (long long)(ms > 5u ? 5u : ms) * 1000000ll;
+        PS_WASM_HOST_WAIT32(&g_sleep_dummy, 0, ns);
+    }
     c->eax = 0;
     c->esp += 4;
 }
@@ -181,9 +291,8 @@ void win32_shim_SetErrorMode(CPU *c) {
     c->esp += 4;
 }
 void win32_shim_GetTickCount(CPU *c) {
-    static uint32_t s_tick = 50000;
-    s_tick += 16;
-    c->eax = s_tick;
+    static uint32_t s_tick = 50000u;
+    c->eax = PS_HOST_ATOMIC_FETCH_ADD32(&s_tick, 16u) + 16u;
     c->esp += 0;
 }
 void win32_shim_SetThreadPriority(CPU *c) {
@@ -203,7 +312,7 @@ void win32_shim_GetCurrentProcessId(CPU *c) {
     c->esp += 0;
 }
 void win32_shim_GetCurrentThreadId(CPU *c) {
-    c->eax = 1000;
+    c->eax = w32_current_tid(c);
     c->esp += 0;
 }
 void win32_shim_SetUnhandledExceptionFilter(CPU *c) {
@@ -223,23 +332,47 @@ void win32_shim_TerminateProcess(CPU *c) {
     c->esp += 8;
 }
 void win32_shim_CloseHandle(CPU *c) {
+    uint32_t h = MR32(c->esp);
+    uint32_t idx = h >> 2;
+    if (idx >= 0x10u && idx < MAX_WIN32_HANDLES) {
+        uint32_t t = PS_HOST_ATOMIC_LOAD32(&g_handles[idx].type);
+        if (t == HANDLE_FILE) {
+            file_lock_acquire();
+            if (g_win32_files[idx]) {
+                fclose(g_win32_files[idx]);
+                g_win32_files[idx] = NULL;
+            }
+            file_lock_release();
+            PS_HOST_ATOMIC_STORE32(&g_handles[idx].type, HANDLE_FREE);
+        }
+    }
     c->eax = 1;
     c->esp += 4;
 }
 void win32_shim_InterlockedExchange(CPU *c) {
     uint32_t pTarget = MR32(c->esp);
     uint32_t val     = MR32(c->esp + 4);
-    uint32_t old     = MR32(pTarget);
-    MR32(pTarget)    = val;
-    c->eax = old;
+    c->eax = pTarget ? PS_ATOMIC_XCHG32(pTarget, val) : 0u;
     c->esp += 8;
 }
 void win32_shim_ReleaseMutex(CPU *c) {
+    uint32_t h = MR32(c->esp);
+    uint32_t idx = h >> 2;
+    if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_MUTEX) {
+        PS_HOST_ATOMIC_STORE32(&g_handles[idx].state, 0u);
+        PS_WASM_HOST_NOTIFY(&g_handles[idx].state, 1u);
+    }
     c->eax = 1;
     c->esp += 4;
 }
 void win32_shim_CreateMutexW(CPU *c) {
-    c->eax = alloc_handle(HANDLE_MUTEX, "NFS_Mutex");
+    uint32_t init_owner = MR32(c->esp + 4) ? 1u : 0u;
+    uint32_t h = alloc_handle(HANDLE_MUTEX, "NFS_Mutex");
+    uint32_t idx = h >> 2;
+    if (idx < MAX_WIN32_HANDLES) {
+        PS_HOST_ATOMIC_STORE32(&g_handles[idx].state, init_owner);
+    }
+    c->eax = h;
     c->esp += 12;
 }
 void win32_shim_GetSystemDirectoryA(CPU *c) {
@@ -255,25 +388,56 @@ void win32_shim_LoadLibraryA(CPU *c) {
 }
 void win32_shim_LeaveCriticalSection(CPU *c) {
     uint32_t cs = MR32(c->esp);
-    if (cs && MR32(cs + 8) > 0) {
-        MR32(cs + 8) -= 1;
+    if (cs) {
+        uint32_t rec = MR32(cs + 8);
+        if (rec > 1u) {
+            MR32(cs + 8) = rec - 1u;
+        } else {
+            MR32(cs + 8) = 0u;
+            PS_ATOMIC_STORE32(cs + 12, 0u);
+            PS_ATOMIC_STORE32(cs + 4, 0u);
+            PS_WASM_NOTIFY(cs + 4, 1u);
+        }
     }
     c->esp += 4;
 }
 void win32_shim_TryEnterCriticalSection(CPU *c) {
     uint32_t cs = MR32(c->esp);
+    uint32_t ok = 0u;
     if (cs) {
-        MR32(cs + 8) += 1;
-        MR32(cs + 12) = 1000;
+        uint32_t tid = w32_current_tid(c);
+        if (PS_ATOMIC_LOAD32(cs + 4) == 1u && PS_ATOMIC_LOAD32(cs + 12) == tid) {
+            MR32(cs + 8) = MR32(cs + 8) + 1u;
+            ok = 1u;
+        } else {
+            uint32_t exp = 0u;
+            if (PS_ATOMIC_CAS32(cs + 4, &exp, 1u)) {
+                PS_ATOMIC_STORE32(cs + 12, tid);
+                MR32(cs + 8) = 1u;
+                ok = 1u;
+            }
+        }
     }
-    c->eax = 1; /* TRUE */
+    c->eax = ok;
     c->esp += 4;
 }
 void win32_shim_EnterCriticalSection(CPU *c) {
     uint32_t cs = MR32(c->esp);
     if (cs) {
-        MR32(cs + 8) += 1; /* RecursionCount */
-        MR32(cs + 12) = 1000; /* OwningThread */
+        uint32_t tid = w32_current_tid(c);
+        if (PS_ATOMIC_LOAD32(cs + 4) == 1u && PS_ATOMIC_LOAD32(cs + 12) == tid) {
+            MR32(cs + 8) = MR32(cs + 8) + 1u;
+        } else {
+            while (1) {
+                uint32_t exp = 0u;
+                if (PS_ATOMIC_CAS32(cs + 4, &exp, 1u)) {
+                    PS_ATOMIC_STORE32(cs + 12, tid);
+                    MR32(cs + 8) = 1u;
+                    break;
+                }
+                PS_WASM_WAIT32(cs + 4, 1, 5000000ll);
+            }
+        }
     }
     c->esp += 4;
 }
@@ -291,25 +455,87 @@ void win32_shim_WaitForSingleObject(CPU *c) {
     uint32_t h = MR32(c->esp);
     uint32_t timeout = MR32(c->esp + 4);
     uint32_t idx = h >> 2;
-    if (idx < MAX_WIN32_HANDLES && (g_handles[idx].type == HANDLE_EVENT || g_handles[idx].type == HANDLE_THREAD)) {
-        while (__atomic_load_n(&g_handles[idx].state, __ATOMIC_ACQUIRE) == 0) {
-            if (timeout == 0) {
-                c->eax = 0x102; /* WAIT_TIMEOUT */
-                c->esp += 8;
-                return;
+    uint32_t rc = 0u; /* WAIT_OBJECT_0 */
+
+    if (idx < MAX_WIN32_HANDLES) {
+        uint32_t t = PS_HOST_ATOMIC_LOAD32(&g_handles[idx].type);
+        long long wait_ns = (timeout == 0xFFFFFFFFu) ? -1ll : (long long)timeout * 1000000ll;
+
+        if (t == HANDLE_EVENT) {
+            uint32_t manual = g_handles[idx].extra;
+            while (1) {
+                if (manual) {
+                    if (PS_HOST_ATOMIC_LOAD32(&g_handles[idx].state) != 0u) break;
+                } else {
+                    uint32_t exp = 1u;
+                    if (PS_HOST_ATOMIC_CAS32(&g_handles[idx].state, &exp, 0u)) break;
+                }
+                if (timeout == 0u) { rc = 0x102u; break; }
+                int w = PS_WASM_HOST_WAIT32(&g_handles[idx].state, 0, wait_ns);
+                if (w == 2) {
+                    if (manual) {
+                        if (PS_HOST_ATOMIC_LOAD32(&g_handles[idx].state) == 0u) rc = 0x102u;
+                    } else {
+                        uint32_t exp2 = 1u;
+                        if (!PS_HOST_ATOMIC_CAS32(&g_handles[idx].state, &exp2, 0u)) rc = 0x102u;
+                    }
+                    break;
+                }
             }
-#ifdef __wasm__
-            __builtin_wasm_memory_atomic_wait32((int *)&g_handles[idx].state, 0, -1);
-#else
-            break;
-#endif
+        } else if (t == HANDLE_SEMAPHORE) {
+            while (1) {
+                uint32_t cur = PS_HOST_ATOMIC_LOAD32(&g_handles[idx].state);
+                if (cur > 0u && PS_HOST_ATOMIC_CAS32(&g_handles[idx].state, &cur, cur - 1u)) {
+                    break;
+                }
+                if (timeout == 0u) { rc = 0x102u; break; }
+                int w = PS_WASM_HOST_WAIT32(&g_handles[idx].state, 0, wait_ns);
+                if (w == 2) {
+                    uint32_t cur2 = PS_HOST_ATOMIC_LOAD32(&g_handles[idx].state);
+                    if (!(cur2 > 0u && PS_HOST_ATOMIC_CAS32(&g_handles[idx].state, &cur2, cur2 - 1u))) {
+                        rc = 0x102u;
+                    }
+                    break;
+                }
+            }
+        } else if (t == HANDLE_MUTEX) {
+            while (1) {
+                uint32_t exp = 0u;
+                if (PS_HOST_ATOMIC_CAS32(&g_handles[idx].state, &exp, 1u)) break;
+                if (timeout == 0u) { rc = 0x102u; break; }
+                int w = PS_WASM_HOST_WAIT32(&g_handles[idx].state, 1, wait_ns);
+                if (w == 2) {
+                    uint32_t exp2 = 0u;
+                    if (!PS_HOST_ATOMIC_CAS32(&g_handles[idx].state, &exp2, 1u)) rc = 0x102u;
+                    break;
+                }
+            }
+        } else if (t == HANDLE_THREAD) {
+            while (PS_HOST_ATOMIC_LOAD32(&g_handles[idx].state) == 0u) {
+                if (timeout == 0u) { rc = 0x102u; break; }
+                int w = PS_WASM_HOST_WAIT32(&g_handles[idx].state, 0, wait_ns);
+                if (w == 2) {
+                    if (PS_HOST_ATOMIC_LOAD32(&g_handles[idx].state) == 0u) rc = 0x102u;
+                    break;
+                }
+            }
         }
     }
-    c->eax = 0; /* WAIT_OBJECT_0 */
+
+    c->eax = rc;
     c->esp += 8;
 }
 void win32_shim_CreateEventA(CPU *c) {
-    c->eax = alloc_handle(HANDLE_EVENT, "NFS_Event");
+    uint32_t manual_reset = MR32(c->esp + 4) ? 1u : 0u;
+    uint32_t init_state   = MR32(c->esp + 8) ? 1u : 0u;
+    const char *name      = MR32(c->esp + 12) ? w32_str(MR32(c->esp + 12)) : "NFS_Event";
+    uint32_t h = alloc_handle(HANDLE_EVENT, name);
+    uint32_t idx = h >> 2;
+    if (idx < MAX_WIN32_HANDLES) {
+        g_handles[idx].extra = manual_reset;
+        PS_HOST_ATOMIC_STORE32(&g_handles[idx].state, init_state);
+    }
+    c->eax = h;
     c->esp += 16;
 }
 void win32_shim_GetDiskFreeSpaceExA(CPU *c) {
@@ -324,6 +550,12 @@ void win32_shim_GetDiskFreeSpaceExA(CPU *c) {
     c->esp += 16;
 }
 void win32_shim_SetWaitableTimer(CPU *c) {
+    uint32_t h = MR32(c->esp);
+    uint32_t idx = h >> 2;
+    if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_EVENT) {
+        PS_HOST_ATOMIC_STORE32(&g_handles[idx].state, 1u);
+        PS_WASM_HOST_NOTIFY(&g_handles[idx].state, 1u);
+    }
     c->eax = 1;
     c->esp += 24;
 }
@@ -351,7 +583,14 @@ void win32_shim_GetSystemTime(CPU *c) {
     c->esp += 4;
 }
 void win32_shim_CreateWaitableTimerA(CPU *c) {
-    c->eax = alloc_handle(HANDLE_EVENT, "Timer");
+    uint32_t manual_reset = MR32(c->esp + 4) ? 1u : 0u;
+    uint32_t h = alloc_handle(HANDLE_EVENT, "Timer");
+    uint32_t idx = h >> 2;
+    if (idx < MAX_WIN32_HANDLES) {
+        g_handles[idx].extra = manual_reset;
+        PS_HOST_ATOMIC_STORE32(&g_handles[idx].state, 1u);
+    }
+    c->eax = h;
     c->esp += 12;
 }
 void win32_shim_DuplicateHandle(CPU *c) {
@@ -369,6 +608,11 @@ void win32_shim_TerminateThread(CPU *c) {
     c->esp += 8;
 }
 void win32_shim_SleepEx(CPU *c) {
+    uint32_t ms = MR32(c->esp);
+    if (ms > 0u) {
+        long long ns = (long long)(ms > 5u ? 5u : ms) * 1000000ll;
+        PS_WASM_HOST_WAIT32(&g_sleep_dummy, 0, ns);
+    }
     c->eax = 0;
     c->esp += 8;
 }
@@ -377,8 +621,19 @@ void win32_shim_GetThreadPriority(CPU *c) {
     c->esp += 4;
 }
 void win32_shim_GetExitCodeThread(CPU *c) {
-    uint32_t pCode = MR32(c->esp + 4);
-    if (pCode) MR32(pCode) = 0;
+    uint32_t hThread = MR32(c->esp);
+    uint32_t pCode   = MR32(c->esp + 4);
+    uint32_t code    = 0u;
+    uint32_t slot    = hThread >> 2;
+    if (slot < MAX_WIN32_HANDLES && g_handles[slot].type == HANDLE_THREAD) {
+        if (PS_HOST_ATOMIC_LOAD32(&g_handles[slot].state) == 0u) {
+            code = 259u; /* STILL_ACTIVE */
+        } else {
+            const guest_thread_desc_t *th = win32_get_guest_thread(hThread);
+            if (th) code = th->exit_code;
+        }
+    }
+    if (pCode) MR32(pCode) = code;
     c->eax = 1;
     c->esp += 8;
 }
@@ -390,7 +645,32 @@ void win32_shim_WriteFile(CPU *c) {
     c->esp += 20;
 }
 void win32_shim_SetFilePointer(CPU *c) {
-    c->eax = 0;
+    uint32_t hFile  = MR32(c->esp);
+    int32_t  distLo = (int32_t)MR32(c->esp + 4);
+    uint32_t pDistHi = MR32(c->esp + 8);
+    uint32_t method = MR32(c->esp + 12);
+    uint32_t idx    = hFile >> 2;
+    int whence = (method == 1u) ? SEEK_CUR : ((method == 2u) ? SEEK_END : SEEK_SET);
+    int64_t dist = pDistHi ? (((int64_t)(int32_t)MR32(pDistHi) << 32) | (uint32_t)distLo) : (int64_t)distLo;
+
+    if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_FILE) {
+        file_lock_acquire();
+        FILE *fp = g_win32_files[idx];
+        long pos = 0;
+        if (fp && fseek(fp, (long)dist, whence) == 0) {
+            pos = ftell(fp);
+            if (pos < 0) pos = 0;
+            if (pDistHi) MR32(pDistHi) = (uint32_t)((uint64_t)pos >> 32);
+            w32_set_last_error(c, 0u);
+            c->eax = (uint32_t)pos;
+        } else {
+            w32_set_last_error(c, 6u); /* ERROR_INVALID_HANDLE */
+            c->eax = 0xFFFFFFFFu;
+        }
+        file_lock_release();
+    } else {
+        c->eax = 0xFFFFFFFFu;
+    }
     c->esp += 16;
 }
 void win32_shim_DeleteFileA(CPU *c) {
@@ -402,16 +682,71 @@ void win32_shim_MoveFileA(CPU *c) {
     c->esp += 8;
 }
 void win32_shim_ReadFile(CPU *c) {
+    uint32_t hFile  = MR32(c->esp);
+    uint32_t pBuf   = MR32(c->esp + 4);
     uint32_t nBytes = MR32(c->esp + 8);
     uint32_t pDone  = MR32(c->esp + 12);
-    if (pDone) MR32(pDone) = nBytes;
-    c->eax = 1;
+    uint32_t pOv    = MR32(c->esp + 16);
+    uint32_t idx    = hFile >> 2;
+    uint32_t got    = 0u;
+    uint32_t ok     = 0u;
+
+    if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_FILE) {
+        file_lock_acquire();
+        FILE *fp = g_win32_files[idx];
+        if (fp) {
+            if (pOv) {
+                uint64_t off = ((uint64_t)MR32(pOv + 12) << 32) | (uint64_t)MR32(pOv + 8);
+                fseek(fp, (long)off, SEEK_SET);
+            }
+            if (nBytes == 0u) {
+                ok = 1u;
+            } else if (pBuf >= GUEST_NULL_GUARD_LIMIT && (uint64_t)pBuf + (uint64_t)nBytes <= (uint64_t)GUEST_END) {
+                got = (uint32_t)fread(g_mem + pBuf, 1, nBytes, fp);
+                ok = 1u;
+            }
+        }
+        file_lock_release();
+    }
+
+    if (pDone) MR32(pDone) = got;
+    if (pOv) {
+        MR32(pOv + 0) = ok ? 0u : 0xC0000008u; /* Internal = STATUS_SUCCESS */
+        MR32(pOv + 4) = got;                   /* InternalHigh = bytes transferred */
+        uint32_t hEv = MR32(pOv + 16);
+        if (hEv && ok) {
+            win32_signal_event(hEv);
+        }
+    }
+    w32_set_last_error(c, ok ? 0u : 6u);
+    c->eax = ok;
     c->esp += 20;
 }
 void win32_shim_GetFileSize(CPU *c) {
+    uint32_t hFile = MR32(c->esp);
     uint32_t pHigh = MR32(c->esp + 4);
+    uint32_t idx   = hFile >> 2;
+    if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_FILE) {
+        file_lock_acquire();
+        FILE *fp = g_win32_files[idx];
+        if (fp) {
+            long cur = ftell(fp);
+            fseek(fp, 0, SEEK_END);
+            long sz = ftell(fp);
+            fseek(fp, cur >= 0 ? cur : 0, SEEK_SET);
+            uint64_t usz = (sz >= 0) ? (uint64_t)sz : 0ull;
+            if (pHigh) MR32(pHigh) = (uint32_t)(usz >> 32);
+            w32_set_last_error(c, 0u);
+            c->eax = (uint32_t)(usz & 0xFFFFFFFFu);
+            file_lock_release();
+            c->esp += 8;
+            return;
+        }
+        file_lock_release();
+    }
     if (pHigh) MR32(pHigh) = 0;
-    c->eax = 0x100000; /* 1 MB default */
+    w32_set_last_error(c, 6u);
+    c->eax = 0xFFFFFFFFu;
     c->esp += 8;
 }
 void win32_shim_GetProcAddress(CPU *c) {
@@ -433,10 +768,8 @@ void win32_shim_SetEvent(CPU *c) {
     uint32_t h = MR32(c->esp);
     uint32_t idx = h >> 2;
     if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_EVENT) {
-        __atomic_store_n(&g_handles[idx].state, 1, __ATOMIC_RELEASE);
-#ifdef __wasm__
-        __builtin_wasm_memory_atomic_notify((int *)&g_handles[idx].state, 1);
-#endif
+        PS_HOST_ATOMIC_STORE32(&g_handles[idx].state, 1u);
+        PS_WASM_HOST_NOTIFY(&g_handles[idx].state, g_handles[idx].extra ? 0x7fffffffu : 1u);
     }
     c->eax = 1;
     c->esp += 4;
@@ -445,12 +778,25 @@ void win32_shim_InterlockedCompareExchange(CPU *c) {
     uint32_t pDest = MR32(c->esp);
     uint32_t exch  = MR32(c->esp + 4);
     uint32_t comp  = MR32(c->esp + 8);
-    uint32_t old   = MR32(pDest);
-    if (old == comp) MR32(pDest) = exch;
-    c->eax = old;
+    if (pDest) {
+        uint32_t expected = comp;
+        PS_ATOMIC_CAS32(pDest, &expected, exch);
+        c->eax = expected;
+    } else {
+        c->eax = 0u;
+    }
     c->esp += 12;
 }
 void win32_shim_PulseEvent(CPU *c) {
+    uint32_t h = MR32(c->esp);
+    uint32_t idx = h >> 2;
+    if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_EVENT) {
+        PS_HOST_ATOMIC_STORE32(&g_handles[idx].state, 1u);
+        PS_WASM_HOST_NOTIFY(&g_handles[idx].state, g_handles[idx].extra ? 0x7fffffffu : 1u);
+        if (!g_handles[idx].extra) {
+            PS_HOST_ATOMIC_STORE32(&g_handles[idx].state, 0u);
+        }
+    }
     c->eax = 1;
     c->esp += 4;
 }
@@ -483,14 +829,24 @@ void win32_shim_WideCharToMultiByte(CPU *c) {
     int cchWide = (int)MR32(c->esp + 12);
     uint32_t dst = MR32(c->esp + 16);
     int cbMulti = (int)MR32(c->esp + 20);
-    int len = cchWide > 0 ? cchWide : 1;
+    int len = 0;
+    if (cchWide < 0) {
+        if (src >= GUEST_NULL_GUARD_LIMIT && src < GUEST_HEAP_LIMIT) {
+            while (len < 4096 && MR16(src + len * 2) != 0) len++;
+            len++;
+        } else {
+            len = 1;
+        }
+    } else {
+        len = cchWide;
+    }
     if (cbMulti == 0) {
         c->eax = (uint32_t)len;
     } else {
         for (int i = 0; i < len && i < cbMulti; ++i) {
             MR8(dst + i) = (uint8_t)MR16(src + i * 2);
         }
-        c->eax = (uint32_t)len;
+        c->eax = (uint32_t)(len < cbMulti ? len : cbMulti);
     }
     c->esp += 32;
 }
@@ -507,7 +863,42 @@ void win32_shim_SetEndOfFile(CPU *c) {
     c->esp += 4;
 }
 void win32_shim_CreateFileW(CPU *c) {
-    c->eax = alloc_handle(HANDLE_FILE, "GameFile");
+    uint32_t wpath_va = MR32(c->esp);
+    uint32_t access   = MR32(c->esp + 4);
+    char ascii_path[260];
+    size_t n = 0;
+    if (wpath_va >= GUEST_NULL_GUARD_LIMIT && wpath_va < GUEST_HEAP_LIMIT) {
+        while (n + 1 < sizeof(ascii_path)) {
+            uint16_t ch = MR16(wpath_va + (uint32_t)(n * 2));
+            if (ch == 0) break;
+            ascii_path[n++] = (char)(ch & 0xFFu);
+        }
+    }
+    ascii_path[n] = '\0';
+    bool read_only = (access & 0x40000000u) == 0u;
+    file_lock_acquire();
+    FILE *fp = win32_open_game_file(ascii_path, read_only);
+    uint32_t log_idx = PS_HOST_ATOMIC_FETCH_ADD32(&g_io_log_count, 1u);
+    if (fp) {
+        uint32_t h = alloc_handle(HANDLE_FILE, ascii_path);
+        uint32_t idx = h >> 2;
+        if (idx < MAX_WIN32_HANDLES) g_win32_files[idx] = fp;
+        file_lock_release();
+        if (log_idx < 32u) {
+            printf("[IO] CreateFileW('%s') -> handle=0x%x\n", ascii_path, h);
+            fflush(stdout);
+        }
+        w32_set_last_error(c, 0u);
+        c->eax = h;
+    } else {
+        file_lock_release();
+        if (log_idx < 32u) {
+            printf("[IO] CreateFileW('%s') -> NOT FOUND\n", ascii_path);
+            fflush(stdout);
+        }
+        w32_set_last_error(c, 2u); /* ERROR_FILE_NOT_FOUND */
+        c->eax = 0xFFFFFFFFu;
+    }
     c->esp += 28;
 }
 void win32_shim_IsDebuggerPresent(CPU *c) {
@@ -515,63 +906,128 @@ void win32_shim_IsDebuggerPresent(CPU *c) {
     c->esp += 0;
 }
 void win32_shim_GetLastError(CPU *c) {
-    c->eax = 0; /* ERROR_SUCCESS */
+    c->eax = w32_get_last_error(c);
     c->esp += 0;
 }
 void win32_shim_IsBadReadPtr(CPU *c) {
-    c->eax = 0;
+    uint32_t lp = MR32(c->esp);
+    uint32_t cb = MR32(c->esp + 4);
+    c->eax = guest_is_valid_va(lp, cb) ? 0u : 1u;
     c->esp += 8;
 }
 void win32_shim_QueryPerformanceCounter(CPU *c) {
     uint32_t pCounter = MR32(c->esp);
     if (pCounter) {
-        static uint64_t s_qpc = 1000000;
-        s_qpc += 16666; /* ~60 fps tick */
-        MR64(pCounter) = s_qpc;
+        static uint32_t s_qpc_lo = 1000000u;
+        uint32_t next = PS_HOST_ATOMIC_FETCH_ADD32(&s_qpc_lo, 16666u) + 16666u;
+        MR64(pCounter) = (uint64_t)next;
     }
     c->eax = 1;
     c->esp += 4;
 }
 void win32_shim_CreateThread(CPU *c) {
-    uint32_t pThrdId = MR32(c->esp + 20);
-    if (pThrdId) MR32(pThrdId) = 1001;
-    c->eax = alloc_handle(HANDLE_THREAD, "WorkerThread");
+    uint32_t stack_sz   = MR32(c->esp + 4);
+    uint32_t start_addr = MR32(c->esp + 8);
+    uint32_t param      = MR32(c->esp + 12);
+    uint32_t flags      = MR32(c->esp + 16);
+    uint32_t pThrdId    = MR32(c->esp + 20);
+    uint32_t tid        = 0u;
+    uint32_t h = win32_create_guest_thread(start_addr, param, stack_sz, flags, &tid);
+    if (pThrdId) MR32(pThrdId) = tid;
+    c->eax = h;
     c->esp += 24;
 }
 void win32_shim_GetFileSizeEx(CPU *c) {
+    uint32_t hFile = MR32(c->esp);
     uint32_t pSize = MR32(c->esp + 4);
-    if (pSize) MR64(pSize) = 0x100000ull;
-    c->eax = 1;
+    uint32_t idx   = hFile >> 2;
+    if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_FILE) {
+        file_lock_acquire();
+        FILE *fp = g_win32_files[idx];
+        if (fp) {
+            long cur = ftell(fp);
+            fseek(fp, 0, SEEK_END);
+            long sz = ftell(fp);
+            fseek(fp, cur >= 0 ? cur : 0, SEEK_SET);
+            if (pSize) MR64(pSize) = (sz >= 0) ? (uint64_t)sz : 0ull;
+            file_lock_release();
+            w32_set_last_error(c, 0u);
+            c->eax = 1;
+            c->esp += 8;
+            return;
+        }
+        file_lock_release();
+    }
+    w32_set_last_error(c, 6u);
+    c->eax = 0;
     c->esp += 8;
 }
 void win32_shim_SetFilePointerEx(CPU *c) {
+    uint32_t hFile   = MR32(c->esp);
+    int64_t  dist    = (int64_t)MR64(c->esp + 4);
+    uint32_t pNewPos = MR32(c->esp + 12);
+    uint32_t method  = MR32(c->esp + 16);
+    uint32_t idx     = hFile >> 2;
+    int whence = (method == 1u) ? SEEK_CUR : ((method == 2u) ? SEEK_END : SEEK_SET);
+
+    if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_FILE) {
+        file_lock_acquire();
+        FILE *fp = g_win32_files[idx];
+        if (fp && fseek(fp, (long)dist, whence) == 0) {
+            long pos = ftell(fp);
+            if (pNewPos) MR64(pNewPos) = (pos >= 0) ? (uint64_t)pos : 0ull;
+            file_lock_release();
+            w32_set_last_error(c, 0u);
+            c->eax = 1;
+            c->esp += 20;
+            return;
+        }
+        file_lock_release();
+    }
+    w32_set_last_error(c, 6u);
     c->eax = 0;
-    c->esp += 16;
+    c->esp += 20;
 }
 void win32_shim_RaiseException(CPU *c) {
     c->esp += 16;
 }
 void win32_shim_ReleaseSemaphore(CPU *c) {
-    c->eax = 1;
+    uint32_t h     = MR32(c->esp);
+    uint32_t count = MR32(c->esp + 4);
+    uint32_t pPrev = MR32(c->esp + 8);
+    uint32_t idx   = h >> 2;
+    if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_SEMAPHORE && count > 0u) {
+        uint32_t prev = PS_HOST_ATOMIC_FETCH_ADD32(&g_handles[idx].state, count);
+        if (pPrev) MR32(pPrev) = prev;
+        PS_WASM_HOST_NOTIFY(&g_handles[idx].state, count);
+        c->eax = 1;
+    } else {
+        c->eax = 0;
+    }
     c->esp += 12;
 }
 void win32_shim_InterlockedDecrement(CPU *c) {
     uint32_t pAdd = MR32(c->esp);
-    uint32_t res = MR32(pAdd) - 1;
-    MR32(pAdd) = res;
-    c->eax = res;
+    c->eax = pAdd ? (PS_ATOMIC_FETCH_ADD32(pAdd, (uint32_t)-1) - 1u) : 0u;
     c->esp += 4;
 }
 void win32_shim_CreateSemaphoreA(CPU *c) {
-    c->eax = alloc_handle(HANDLE_SEMAPHORE, "NFS_Sem");
+    uint32_t init_cnt = MR32(c->esp + 4);
+    uint32_t max_cnt  = MR32(c->esp + 8);
+    const char *name  = MR32(c->esp + 12) ? w32_str(MR32(c->esp + 12)) : "NFS_Sem";
+    uint32_t h = alloc_handle(HANDLE_SEMAPHORE, name);
+    uint32_t idx = h >> 2;
+    if (idx < MAX_WIN32_HANDLES) {
+        g_handles[idx].extra = max_cnt ? max_cnt : 0x7fffffffu;
+        PS_HOST_ATOMIC_STORE32(&g_handles[idx].state, init_cnt);
+    }
+    c->eax = h;
     c->esp += 16;
 }
 void win32_shim_InterlockedExchangeAdd(CPU *c) {
     uint32_t pAdd = MR32(c->esp);
     uint32_t val  = MR32(c->esp + 4);
-    uint32_t old  = MR32(pAdd);
-    MR32(pAdd)    = old + val;
-    c->eax = old;
+    c->eax = pAdd ? PS_ATOMIC_FETCH_ADD32(pAdd, val) : 0u;
     c->esp += 8;
 }
 void win32_shim_SetThreadIdealProcessor(CPU *c) {
@@ -580,31 +1036,70 @@ void win32_shim_SetThreadIdealProcessor(CPU *c) {
 }
 void win32_shim_TlsGetValue(CPU *c) {
     uint32_t idx = MR32(c->esp);
-    c->eax = (idx < 64) ? g_tls_slots[idx] : 0;
+    if (idx < 64u) {
+        if (c && c->fs_base >= GUEST_NULL_GUARD_LIMIT && c->fs_base + 0x0f10u <= GUEST_HEAP_LIMIT) {
+            c->eax = MR32(c->fs_base + 0x0e10u + idx * 4u);
+        } else {
+            c->eax = g_tls_slots[idx];
+        }
+        w32_set_last_error(c, 0u);
+    } else {
+        c->eax = 0u;
+        w32_set_last_error(c, 87u);
+    }
     c->esp += 4;
 }
 void win32_shim_TlsSetValue(CPU *c) {
     uint32_t idx = MR32(c->esp);
     uint32_t val = MR32(c->esp + 4);
-    if (idx < 64) g_tls_slots[idx] = val;
-    c->eax = 1;
+    if (idx < 64u) {
+        if (c && c->fs_base >= GUEST_NULL_GUARD_LIMIT && c->fs_base + 0x0f10u <= GUEST_HEAP_LIMIT) {
+            MR32(c->fs_base + 0x0e10u + idx * 4u) = val;
+        } else {
+            g_tls_slots[idx] = val;
+        }
+        c->eax = 1u;
+    } else {
+        c->eax = 0u;
+    }
     c->esp += 8;
 }
 void win32_shim_TlsAlloc(CPU *c) {
-    for (uint32_t i = 0; i < 64; ++i) {
-        if (!(g_tls_bitmap & (1ull << i))) {
-            g_tls_bitmap |= (1ull << i);
-            g_tls_slots[i] = 0;
-            c->eax = i;
+    while (1) {
+        uint64_t cur = PS_HOST_ATOMIC_LOAD64(&g_tls_bitmap);
+        uint32_t chosen = 64u;
+        for (uint32_t i = 0; i < 64u; ++i) {
+            if (!(cur & (1ull << i))) {
+                chosen = i;
+                break;
+            }
+        }
+        if (chosen >= 64u) {
+            c->eax = (uint32_t)-1; /* TLS_OUT_OF_INDEXES */
+            c->esp += 0;
+            return;
+        }
+        uint64_t next = cur | (1ull << chosen);
+        if (PS_HOST_ATOMIC_CAS64(&g_tls_bitmap, &cur, next)) {
+            g_tls_slots[chosen] = 0u;
+            if (c && c->fs_base >= GUEST_NULL_GUARD_LIMIT && c->fs_base + 0x0f10u <= GUEST_HEAP_LIMIT) {
+                MR32(c->fs_base + 0x0e10u + chosen * 4u) = 0u;
+            }
+            c->eax = chosen;
             c->esp += 0;
             return;
         }
     }
-    c->eax = (uint32_t)-1; /* TLS_OUT_OF_INDEXES */
-    c->esp += 0;
 }
 void win32_shim_CreateMutexA(CPU *c) {
-    c->eax = alloc_handle(HANDLE_MUTEX, "NFS_Mutex");
+    uint32_t init_owner = MR32(c->esp + 4) ? 1u : 0u;
+    const char *name = MR32(c->esp + 8) ? w32_str(MR32(c->esp + 8)) : "NFS_Mutex";
+    uint32_t h = alloc_handle(HANDLE_MUTEX, name);
+    uint32_t idx = h >> 2;
+    if (idx < MAX_WIN32_HANDLES) {
+        PS_HOST_ATOMIC_STORE32(&g_handles[idx].state, init_owner);
+    }
+    c->eax = h;
     c->esp += 12;
 }
 void win32_shim_VirtualProtect(CPU *c) {
@@ -624,13 +1119,38 @@ void win32_shim_ResetEvent(CPU *c) {
     uint32_t h = MR32(c->esp);
     uint32_t idx = h >> 2;
     if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_EVENT) {
-        __atomic_store_n(&g_handles[idx].state, 0, __ATOMIC_RELEASE);
+        PS_HOST_ATOMIC_STORE32(&g_handles[idx].state, 0u);
     }
     c->eax = 1;
     c->esp += 4;
 }
 void win32_shim_CreateFileA(CPU *c) {
-    c->eax = alloc_handle(HANDLE_FILE, "GameFile");
+    const char *path = w32_str(MR32(c->esp));
+    uint32_t access  = MR32(c->esp + 4);
+    bool read_only   = (access & 0x40000000u) == 0u;
+    file_lock_acquire();
+    FILE *fp = win32_open_game_file(path, read_only);
+    uint32_t log_idx = PS_HOST_ATOMIC_FETCH_ADD32(&g_io_log_count, 1u);
+    if (fp) {
+        uint32_t h = alloc_handle(HANDLE_FILE, path);
+        uint32_t idx = h >> 2;
+        if (idx < MAX_WIN32_HANDLES) g_win32_files[idx] = fp;
+        file_lock_release();
+        if (log_idx < 32u) {
+            printf("[IO] CreateFileA('%s') -> handle=0x%x\n", path, h);
+            fflush(stdout);
+        }
+        w32_set_last_error(c, 0u);
+        c->eax = h;
+    } else {
+        file_lock_release();
+        if (log_idx < 32u) {
+            printf("[IO] CreateFileA('%s') -> NOT FOUND\n", path);
+            fflush(stdout);
+        }
+        w32_set_last_error(c, 2u); /* ERROR_FILE_NOT_FOUND */
+        c->eax = 0xFFFFFFFFu;
+    }
     c->esp += 28;
 }
 void win32_shim_DispatchMessageA(CPU *c) {
@@ -1392,17 +1912,15 @@ uint32_t win32_create_event(void) {
 void win32_signal_event(uint32_t h) {
     uint32_t idx = h >> 2;
     if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_EVENT) {
-        __atomic_store_n(&g_handles[idx].state, 1, __ATOMIC_RELEASE);
-#ifdef __wasm__
-        __builtin_wasm_memory_atomic_notify((int *)&g_handles[idx].state, 1);
-#endif
+        PS_HOST_ATOMIC_STORE32(&g_handles[idx].state, 1u);
+        PS_WASM_HOST_NOTIFY(&g_handles[idx].state, g_handles[idx].extra ? 0x7fffffffu : 1u);
     }
 }
 
 void win32_reset_event(uint32_t h) {
     uint32_t idx = h >> 2;
     if (idx < MAX_WIN32_HANDLES && g_handles[idx].type == HANDLE_EVENT) {
-        __atomic_store_n(&g_handles[idx].state, 0, __ATOMIC_RELEASE);
+        PS_HOST_ATOMIC_STORE32(&g_handles[idx].state, 0u);
     }
 }
 
@@ -1415,23 +1933,23 @@ uint32_t win32_get_event_state_addr(uint32_t h) {
 }
 
 /* --------------------------------------------------------------------------
- * Guest Thread Manager & Worker Execution Loop
+ * Guest Thread Manager & Multi-Slot Worker Execution Loop
  * -------------------------------------------------------------------------- */
-#define MAX_GUEST_THREADS 4
+#define MAX_GUEST_THREADS GUEST_MAX_WORKERS
 static guest_thread_desc_t g_guest_threads[MAX_GUEST_THREADS];
 static uint32_t g_guest_thread_count = 0;
+static volatile uint32_t g_workers_shutdown = 0;
 
-/* Worker thread execution signal:
- * 0 = idle / waiting
- * 1 = run active thread
- * 2 = shutdown worker
- */
-static volatile uint32_t g_worker_signal = 0;
-static volatile uint32_t g_active_thread_idx = 0;
+uint32_t win32_get_guest_thread_count(void) {
+    return PS_HOST_ATOMIC_LOAD32(&g_guest_thread_count);
+}
 
 uint32_t win32_create_guest_thread(uint32_t start_addr, uint32_t arglist, uint32_t stack_sz, uint32_t initflag, uint32_t *out_tid) {
-    if (g_guest_thread_count >= MAX_GUEST_THREADS) return 0;
-    uint32_t idx = g_guest_thread_count++;
+    uint32_t cur = PS_HOST_ATOMIC_LOAD32(&g_guest_thread_count);
+    if (cur >= MAX_GUEST_THREADS) return 0;
+    uint32_t idx = PS_HOST_ATOMIC_FETCH_ADD32(&g_guest_thread_count, 1u);
+    if (idx >= MAX_GUEST_THREADS) return 0;
+
     guest_thread_desc_t *th = &g_guest_threads[idx];
 
     uint32_t h = alloc_handle(HANDLE_THREAD, "GuestWorkerThread");
@@ -1449,24 +1967,18 @@ uint32_t win32_create_guest_thread(uint32_t start_addr, uint32_t arglist, uint32
     th->arglist = arglist;
     th->stack_size = stack_sz;
     th->initflag = initflag;
-    th->cpu_va = GUEST_WORKER_CPU_ADDR;
-    th->stack_top_va = GUEST_WORKER_STACK_TOP;
+    th->cpu_va = GUEST_WORKER_CPU_ADDR_N(idx);
+    th->teb_va = GUEST_WORKER_TEB_ADDR_N(idx);
+    th->stack_top_va = GUEST_WORKER_STACK_TOP_N(idx);
     th->suspended = (initflag & 4u) ? 1u : 0u; /* CREATE_SUSPENDED = 4 */
-    th->active = 1u;
-
-    printf("[THREAD] CREATED: handle=0x%x, tid=0x%x, entry=0x%08x, arglist=0x%08x, suspended=%u\n",
-           h, tid, start_addr, arglist, th->suspended);
-    fflush(stdout);
-
-    if (th->suspended) {
-        printf("[THREAD] SUSPENDED: handle=0x%x holding execution pending ResumeThread\n", h);
-        fflush(stdout);
-    }
+    th->exit_code = 0u;
 
     CPU *wcpu = (CPU *)(g_mem + th->cpu_va);
-    guest_init_worker_teb(wcpu);
+    memset(wcpu, 0, sizeof(CPU));
+    wcpu->fcw = 0x037fu;
+    guest_init_worker_teb_slot(wcpu, idx);
 
-    /* Setup worker stack:
+    /* Setup isolated worker x86 stack:
      * [esp + 4] = arglist
      * [esp]     = 0x00897709 (return address)
      */
@@ -1474,16 +1986,21 @@ uint32_t win32_create_guest_thread(uint32_t start_addr, uint32_t arglist, uint32
     MR32(th->stack_top_va - 8u) = 0x00897709u;
 
     wcpu->esp = th->stack_top_va - 8u;
+    wcpu->ebp = th->stack_top_va;
     wcpu->eip = start_addr;
 
-    g_active_thread_idx = idx;
+    PS_HOST_ATOMIC_STORE32(&th->active, 1u);
 
-    /* If not suspended, activate immediately */
-    if (!th->suspended) {
-        __atomic_store_n(&g_worker_signal, 1u, __ATOMIC_RELEASE);
-#ifdef __wasm__
-        __builtin_wasm_memory_atomic_notify((int *)&g_worker_signal, 1);
-#endif
+    printf("[THREAD] CREATED: slot=%u, handle=0x%x, tid=0x%x, entry=0x%08x, arglist=0x%08x, cpu=0x%08x, esp=0x%08x, suspended=%u\n",
+           idx, h, tid, start_addr, arglist, th->cpu_va, wcpu->esp, th->suspended);
+    fflush(stdout);
+
+    if (th->suspended) {
+        printf("[THREAD] SUSPENDED: slot=%u, handle=0x%x holding execution pending ResumeThread\n", idx, h);
+        fflush(stdout);
+    } else {
+        PS_HOST_ATOMIC_STORE32(&th->signal, 1u);
+        PS_WASM_HOST_NOTIFY(&th->signal, 1u);
     }
 
     return h;
@@ -1493,17 +2010,16 @@ uint32_t win32_resume_guest_thread(uint32_t hThread) {
     uint32_t slot = hThread >> 2;
     if (slot < MAX_WIN32_HANDLES && g_handles[slot].type == HANDLE_THREAD) {
         uint32_t idx = g_handles[slot].extra;
-        if (idx < g_guest_thread_count && g_guest_threads[idx].active) {
+        if (idx < MAX_GUEST_THREADS && PS_HOST_ATOMIC_LOAD32(&g_guest_threads[idx].active)) {
             uint32_t prev = g_guest_threads[idx].suspended;
-            if (prev > 0) {
-                g_guest_threads[idx].suspended = 0;
-                g_active_thread_idx = idx;
-                printf("[THREAD] RESUMED: handle=0x%x, waking worker thread (prev_suspend=%u)\n", hThread, prev);
-                fflush(stdout);
-                __atomic_store_n(&g_worker_signal, 1u, __ATOMIC_RELEASE);
-#ifdef __wasm__
-                __builtin_wasm_memory_atomic_notify((int *)&g_worker_signal, 1);
-#endif
+            if (prev > 0u) {
+                g_guest_threads[idx].suspended = prev - 1u;
+                if (g_guest_threads[idx].suspended == 0u) {
+                    printf("[THREAD] RESUMED: slot=%u, handle=0x%x, waking worker thread (prev_suspend=%u)\n", idx, hThread, prev);
+                    fflush(stdout);
+                    PS_HOST_ATOMIC_STORE32(&g_guest_threads[idx].signal, 1u);
+                    PS_WASM_HOST_NOTIFY(&g_guest_threads[idx].signal, 1u);
+                }
             }
             return prev;
         }
@@ -1515,61 +2031,86 @@ const guest_thread_desc_t *win32_get_guest_thread(uint32_t hThread) {
     uint32_t slot = hThread >> 2;
     if (slot < MAX_WIN32_HANDLES && g_handles[slot].type == HANDLE_THREAD) {
         uint32_t idx = g_handles[slot].extra;
-        if (idx < g_guest_thread_count && g_guest_threads[idx].active) {
+        if (idx < MAX_GUEST_THREADS && PS_HOST_ATOMIC_LOAD32(&g_guest_threads[idx].active)) {
             return &g_guest_threads[idx];
         }
     }
     return NULL;
 }
 
-void guest_worker_thread_run(uint32_t cpu_va) {
-    CPU *c = (CPU *)(g_mem + cpu_va);
-    guest_init_worker_teb(c);
+void guest_worker_slot_run(uint32_t slot_idx) {
+    if (slot_idx >= MAX_GUEST_THREADS) return;
+    guest_thread_desc_t *th = &g_guest_threads[slot_idx];
+    guest_worker_mailbox_t *mb = (guest_worker_mailbox_t *)(g_mem + GUEST_WORKER_MAILBOX_VA + slot_idx * sizeof(guest_worker_mailbox_t));
 
-    while (1) {
-        while (__atomic_load_n(&g_worker_signal, __ATOMIC_ACQUIRE) == 0) {
+    /* Signal mailbox readiness to host and any waiters */
+    PS_HOST_ATOMIC_STORE32(&mb->state, 1u); /* READY */
+    PS_WASM_HOST_NOTIFY(&mb->state, 1u);
+
+    while (!PS_HOST_ATOMIC_LOAD32(&g_workers_shutdown)) {
+        while (PS_HOST_ATOMIC_LOAD32(&th->signal) == 0u && !PS_HOST_ATOMIC_LOAD32(&g_workers_shutdown)) {
 #ifdef __wasm__
-            __builtin_wasm_memory_atomic_wait32((int *)&g_worker_signal, 0, -1);
+            PS_WASM_HOST_WAIT32(&th->signal, 0, 250000000ll);
 #else
-            break;
+            return;
 #endif
         }
 
-        uint32_t sig = __atomic_load_n(&g_worker_signal, __ATOMIC_ACQUIRE);
-        if (sig == 2u) {
-            /* Shutdown signal */
+        uint32_t sig = PS_HOST_ATOMIC_LOAD32(&th->signal);
+        if (sig == 2u || PS_HOST_ATOMIC_LOAD32(&g_workers_shutdown)) {
             break;
         }
+        if (sig == 0u) {
+            continue;
+        }
 
-        /* Consume signal */
-        __atomic_store_n(&g_worker_signal, 0u, __ATOMIC_RELEASE);
+        /* Consume run signal */
+        PS_HOST_ATOMIC_STORE32(&th->signal, 0u);
+        PS_HOST_ATOMIC_STORE32(&mb->state, 2u); /* RUNNING */
 
-        uint32_t idx = g_active_thread_idx;
-        if (idx < g_guest_thread_count && g_guest_threads[idx].active) {
-            uint32_t entry = g_guest_threads[idx].start_address;
+        if (PS_HOST_ATOMIC_LOAD32(&th->active)) {
+            CPU *c = (CPU *)(g_mem + GUEST_WORKER_CPU_ADDR_N(slot_idx));
+            if (c->fs_base == 0u) {
+                guest_init_worker_teb_slot(c, slot_idx);
+            }
+            uint32_t entry = th->start_address;
+            mb->entry = entry;
+            mb->cpu_va = th->cpu_va;
             if (entry) {
-                printf("[THREAD] ENTRY_ENTERED: executing start_address=0x%08x on worker CPU\n", entry);
+                printf("[THREAD] ENTRY_ENTERED: slot=%u executing start_address=0x%08x (esp=0x%08x, teb=0x%08x)\n",
+                       slot_idx, entry, c->esp, c->fs_base);
                 fflush(stdout);
                 dispatch_indirect(c, entry);
-                printf("[THREAD] EXITED: entry 0x%08x completed execution\n", entry);
+                th->exit_code = c->eax;
+                mb->exit_code = c->eax;
+                PS_HOST_ATOMIC_FETCH_ADD32(&mb->completed, 1u);
+                printf("[THREAD] EXITED: slot=%u entry 0x%08x completed (eax=0x%08x)\n", slot_idx, entry, c->eax);
                 fflush(stdout);
             }
-            /* If the entry returned, thread has completed execution */
-            uint32_t h = g_guest_threads[idx].handle;
-            uint32_t slot = h >> 2;
-            if (slot < MAX_WIN32_HANDLES) {
-                __atomic_store_n(&g_handles[slot].state, 1, __ATOMIC_RELEASE);
-#ifdef __wasm__
-                __builtin_wasm_memory_atomic_notify((int *)&g_handles[slot].state, 1);
-#endif
+            uint32_t h = th->handle;
+            uint32_t hslot = h >> 2;
+            if (hslot < MAX_WIN32_HANDLES) {
+                PS_HOST_ATOMIC_STORE32(&g_handles[hslot].state, 1u);
+                PS_WASM_HOST_NOTIFY(&g_handles[hslot].state, 0x7fffffffu);
             }
         }
+        PS_HOST_ATOMIC_STORE32(&mb->state, 1u); /* Back to READY */
     }
+    PS_HOST_ATOMIC_STORE32(&mb->state, 3u); /* TERMINATED */
+}
+
+void guest_worker_thread_run(uint32_t cpu_va) {
+    uint32_t slot_idx = 0u;
+    if (cpu_va >= GUEST_WORKER_CPU_ADDR_N(0)) {
+        slot_idx = (cpu_va - GUEST_WORKER_CPU_ADDR_N(0)) / GUEST_WORKER_CPU_STRIDE;
+    }
+    guest_worker_slot_run(slot_idx);
 }
 
 void guest_worker_thread_stop(void) {
-    __atomic_store_n(&g_worker_signal, 2u, __ATOMIC_RELEASE);
-#ifdef __wasm__
-    __builtin_wasm_memory_atomic_notify((int *)&g_worker_signal, 1);
-#endif
+    PS_HOST_ATOMIC_STORE32(&g_workers_shutdown, 1u);
+    for (uint32_t i = 0; i < MAX_GUEST_THREADS; ++i) {
+        PS_HOST_ATOMIC_STORE32(&g_guest_threads[i].signal, 2u);
+        PS_WASM_HOST_NOTIFY(&g_guest_threads[i].signal, 1u);
+    }
 }

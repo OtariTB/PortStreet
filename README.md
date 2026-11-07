@@ -1,173 +1,143 @@
-# PortSpeed
-
-> **Experimental native browser port of Need for Speed: ProStreet (2007) using x86 static recompilation and WebAssembly.**
-
----
-
-## Legal & Research Disclaimer
-
-**PortSpeed is an independent reverse-engineering and preservation research project.**
-- This project is **not** affiliated with, sponsored by, or endorsed by Electronic Arts, EA Black Box, or their licensors.
-- "Need for Speed" and "Need for Speed: ProStreet" are trademarks of Electronic Arts Inc.
-- **No copyrighted game assets, proprietary binaries, or original game code are distributed in this repository.** Users must supply their own legally purchased copy of *Need for Speed: ProStreet* (PC v1.1).
-
----
-
-## Architectural Strategy: AOT Static Recompilation
-
-PortSpeed brings the original 2007 PC Windows x86 game to modern web browsers via **Ahead-Of-Time (AOT) static binary recompilation** rather than full instruction emulation or building a reimplemented racing clone:
-
-```mermaid
-graph TD
-    A["Original PC nfs.exe (28.7 MB)"] --> B["Phase 1: SecuROM Deobfuscation & Cataloging"]
-    B --> C["Phase 2: Static x86 -> C99 Lifter (31,995 functions, 32 shards)"]
-    C --> D["Phase 3: Platform Runtime & Engine Boot (MSVCR80, Win32, initterm)"]
-    D --> E["Phase 4: D3D9 / D3DX9 Effect Serialization to WebGL2 / WebGPU"]
-    E --> F["Phase 5: AudioWorklet, DirectInput & OPFS Asset Streaming"]
-    F --> G["Phase 6: In-Game Racing, Mobile Tuning & Touch Controls"]
-```
-
-1. **Ahead-Of-Time Translation:** The original MSVC 8.0 x86 machine code in `nfs.exe` (31,995 functions across 220,816 basic blocks) is translated into 32 modular C99 shards (`shard_0000.c` .. `shard_0031.c`) with native WebAssembly SIMD128 intrinsics, 80-bit x87 FPU stack emulation, and bit-parallel arithmetic flag computation.
-2. **1:1 Guest Linear Memory:** Guest virtual addresses (`0x00000000..0x28000000`, 640 MB) map directly 1:1 into WebAssembly linear memory (`IMAGE_BASE=0`), completely eliminating pointer translation overhead for game data and memory access.
-3. **Master Dispatch Table (`g_dtab`):** Direct $O(1)$ function pointer array of 5.6M entries covering `0x00401000..0x00967000`, dispatching lifted functions and imported shims at native execution speed.
-4. **Clean CRT & Win32 Shims:** Dynamic `MSVCR80.dll` IAT imports (156 functions) and Win32 imports (198 functions) are shimmed in clean C99 to provide operating system services.
-5. **No Synthetic Remake / Clean Scope:** PortSpeed strictly aims to recompile and execute authentic *Need for Speed: ProStreet* code. It contains no synthetic racing physics, hardcoded tracks, placeholder cars, or fake game loops. The interactive browser entry point (`web/`) is strictly a research "Asset Lab" for inspecting original game textures and vehicle geometries.
-
----
-
-## Current Engineering Status & Verified Reality
-
-> [!WARNING]
-> **Authenticity & Playability Status**:
-> - **The original game is NOT yet playable in the browser.**
-> - **Original game menus, 3D world rendering, racing physics, and gameplay loops are NOT active.**
-> - **A complete real browser game boot has NOT been achieved.**
-> - While an emulated Unicorn test completed all 960 C++ static initializers in isolation, **this must not be confused with genuine WebAssembly execution.**
-> - In genuine WebAssembly, the combined recompiled binary [`build/game.wasm`](file:///c:/Users/tabat/OneDrive/Desktop/NFS-PortStreet-Project/build/game.wasm) (47.17 MB) builds cleanly and executes through PE section mapping, TEB setup, IAT binding, and constructors #1 through #168.
-> - **Current Blocker:** Execution halts at Constructor #169 (`0x0095aa40`), where `sub_00463e90` (`bChunk::Alloc`) triggers an intentional null-dereference assertion trap (`RuntimeError: unreachable`) when small-block arena pool replenishment (`sub_00464100`) returns 0.
-
-### What is verified:
-- **Full Combined WASM Build**: The entire lifted engine (32 shards + platform runtime + master dispatch table) builds into a monolithic 47.17 MB WebAssembly module (`build/game.wasm`) via Zig 0.13.0 and `wasm-ld`.
-- **Authentic Startup Execution**: Under Node.js WASI, genuine game code loads authentic PE sections, sets up the Win32 TEB (`0x00100000`), binds IAT shims, populates 2,151 SecuROM trampolines into `g_dtab`, and begins invoking C++ static initializers via `initterm_run_cpp_constructors`.
-- **Constructors #1 through #168 Passing**: In genuine WASM execution, the first 168 static initializers run and complete with zero memory traps.
-- **SecuROM Trampoline Resolution & Generator Preservation**: 2,151 SecuROM trampoline targets registered in `g_dtab`; all 35 manually recovered functions and fixes codified in `tools/manual_overrides.py` and survive 100% of shard regenerations.
-- **Systemic MUL Arithmetic Flag Fix**: Bit-exact 8/16/32-bit unsigned `mul` lifting with authentic CF/OF flag emulation integrated directly into `InstructionLifter`, eliminating the previous `0xFFFFFFFF` overflow hang.
-- **D3D9 Compatibility Layer & Shaders**: Lockless command ring buffer (64-byte header), 34 D3DX9 effect files parsed, 597 shaders cataloged, and authentic shader pairs validated in WebGL2.
-- **Frontend & Web Runtime**: Full WebGL2 D3D9 command consumer with draw calls, Web AudioWorklet PCM streaming pipeline, DirectInput8 + mobile touch overlay, OPFS 1 MiB chunk streaming, and 60 Hz vehicle physics simulation.
-- **Unit & Lifter Test Suites**: 100% green across Python unittest suites (including `tests/test_trampoline_resolution.py` and `tests/test_catalog.py`) and TypeScript D3D9 consumer test suites.
-
----
-
-## Master Engineering Roadmap & Milestone Status
-
-> [!NOTE]
-> For a detailed technical overview of recent achievements, architectural decisions, and handoff instructions, see [**`Oto's latest.md`**](file:///c:/Users/tabat/OneDrive/Desktop/NFS-PortStreet-Project/Oto's%20latest.md).
-
-### Phase 1: SecuROM Deobfuscation & Master Function Catalog [COMPLETED]
-- [x] **Step 1.1: Automatic Nopping of Countdown Stubs [VERIFIED]**: Neutralized all 220 genuine SecuROM countdown stubs in memory (2,640 bytes NOPped).
-- [x] **Step 1.2: Symbolic Trampoline & Prologue Resolution [VERIFIED]**: Emulated 100.0% of all 2,153 indirect jump sites targeting `.securom` via Unicorn Engine 2.1.4 and Capstone, recovering native MSVC stack frame prologues.
-- [x] **Step 1.3: Master Control-Flow Recovery [VERIFIED]**: Discovered and validated 31,995 functions across 220,816 basic blocks with a 99.98% CFG recovery rate.
-
-### Phase 2: Full-Scale Static x86-to-C99 Lifter [COMPLETED]
-- [x] **Step 2.1: Full SSE/SSE2 SIMD128 Instruction Support [VERIFIED]**: Created `runtime/cpu.h` with 128-bit `xmm_reg_t` and native `<wasm_simd128.h>` intrinsics (`v128_t`).
-- [x] **Step 2.2: Comprehensive x87 FPU Stack Emulation [VERIFIED]**: Full 80-bit extended precision, 8-level circular stack (`st[8]`), and status/control words (FCW/FSW).
-- [x] **Step 2.3: Arithmetic Flag Calculation & Fast Path Optimization [VERIFIED]**: Bit-parallel flag computation (`FLAGS_ADC_M`, `FLAGS_SBB_M`, `FLAGS_LOG_M`) for zero-overhead conditional branching.
-- [x] **Step 2.4: 32-Shard Output Pipeline & Master Dispatch Table [VERIFIED]**: Generated 32 balanced C99 shards (`shard_0000.c` .. `shard_0031.c`) and master dispatch table `g_dtab`.
-
-### Phase 3: Platform Runtime & Engine Boot Chain [IN PROGRESS — CONSTRUCTOR #169 ACTIVE BLOCKER]
-- [x] **Step 3.1: 1:1 Linear Guest Memory Layout [VERIFIED]**: Implemented 640 MB guest address space in `runtime/memory.h` and `runtime/memory.c` with null-guard, authentic sections, and BSS.
-- [x] **Step 3.2: MSVCR80.dll IAT Shim Layer [VERIFIED]**: Full C99 implementations of all 156 imports from `MSVCR80.dll` (`runtime/crt.h`, `runtime/crt.c`), bound into `g_dtab`.
-- [x] **Step 3.3: Win32 Core Emulation [VERIFIED]**: Full C99 implementations of 198 imports from `KERNEL32`, `USER32`, `ADVAPI32`, `WINMM`, etc. (`runtime/win32.h`, `runtime/win32.c`).
-- [ ] **Step 3.4: Static C++ Initializer Chain `_initterm` [IN PROGRESS]**:
-  - Monolithic C99-to-WASM binary linked (`build/game.wasm`, 47.17 MB) via Zig 0.13.0.
-  - Master dispatch table `g_dtab` populated with 2,151 SecuROM trampoline targets at boot.
-  - Implemented missing D3DX9 shims (`D3DXMatrixTranspose`, `D3DXVec3Transform`).
-  - Resolved x86 CALL/RET Stack ABI bridge in `runtime/cpu.h`.
-  - Cleaned vector constructor iterator `sub_00828652` (`__ehvec_ctor`) and lifted missing constructor callbacks.
-  - Genuine WASM execution verified for **Constructors #1 through #168**.
-  - **Active Blocker**: Constructor #169 (`0x0095aa40`) traps inside `sub_00463e90` (`bChunk::Alloc`) when small-block arena pool replenishment (`sub_00464100`) returns failure.
-- [ ] **Step 3.5: ProStreet `main()` & Engine Boot Orchestration [PENDING CONSTRUCTOR RESOLUTION]**:
-  - Guest stack frame setup at `c->esp` matching MSVC CRT `cdecl` calling convention verified in dry runs: `[esp]` = dummy return VA (`0x00828ae0`), `[esp+4]` = `argc`, `[esp+8]` = `argv` (`0x00101100`), `[esp+12]` = `envp` (`0x00101110`).
-  - Populated CRT globals `0x00b33a64` (`__argc`), `0x00b33a6c` (`__argv`), and `0x00b33a68` (`_environ`).
-  - Implemented return slot popping (`c->esp += 4u`) on boot hooks (`hook_safemode_check`, `hook_dos_header_check`, `hook_security_cookie`, `hook_sub_0082851b`).
-  - Fixed `sub_00828460` (`__security_check_cookie`) in `gen/shard_0019.c` where `/* Unsupported: repz ret */` previously fell through into `__report_gsfailure`.
-  - Added `hook_multi_instance_check` (`0x0070f640`) in `runtime/boot.c` to prevent multi-instance process aborts in WASM.
-  - End-to-end execution of `main()` in `build/game.wasm` will be unblocked once all 960 static initializers complete.
-- [x] **Runtime Hygiene & Zero Diagnostics**: All files in `runtime/` maintain **0 errors** across Clangd and MSVC IntelliSense.
-
-### Phase 4: Graphics Command Stream & WebGL2 / WebGPU Renderer [IN PROGRESS / INTEGRATION PENDING]
-- [x] **Step 4.1: Direct3D 9 COM Compatibility Layer & Command Ring Buffer [TESTED IN ISOLATION]**:
-  - Implemented `Direct3DCreate9` and `IDirect3DDevice9` vtables in C99 (`runtime/d3d9.h`, `runtime/d3d9.c`).
-  - Lockless shared-memory ring buffer (`runtime/d3d9_cmd.h`) with a **64-byte** cache-line aligned control header, 8-byte aligned packets, and wraparound handling.
-  - Lifted genuine graphics initialization routines (`sub_0070e150` and `sub_00705d30`) write valid command streams verified in isolated test harnesses.
-- [x] **Step 4.2: D3DX9 Effect (`ID3DXEffect`) Parser & Authentic Shader Validation [TESTED IN ISOLATION]**:
-  - Parsed all 34 embedded effect resources in `.rsrc`, cataloging parameters, techniques, passes, samplers, and 597 shader bytecodes.
-  - Transpiled D3D9 shader bytecode to GLSL ES 3.00 via MojoShader and validated authentic shader pair rendering in headless Chrome WebGL2.
-- [x] **Step 4.3: TypeScript Browser GPU Host & Render Pipeline [VERIFIED]**:
-  - [x] Command Consumer Core (`web/src/d3d9_consumer.ts`): `BEGIN_SCENE`, `END_SCENE`, `PRESENT`.
-  - [x] Viewport & Scissor: top-left to bottom-left coordinate conversion.
-  - [x] Render States: 8 critical states (`ZENABLE`, `ZWRITEENABLE`, `ALPHABLENDENABLE`, etc.).
-  - [x] D3D9 Clear Semantics: unconditional write mask override during clear operations.
-  - [x] Vertex & Index Buffers: allocation, sub-updates, ring wraparound, and stream bindings (`CREATE_VERTEX_BUFFER`, `UPDATE_VERTEX_BUFFER`, `DESTROY_VERTEX_BUFFER`, `SET_STREAM_SOURCE`, `SET_INDICES`).
-  - [x] Vertex Declarations: dynamic attribute layouts (`CREATE_VERTEX_DECLARATION`, `SET_VERTEX_DECLARATION`).
-  - [x] Textures & Samplers: ARGB & DXT1 texture creation, mip sub-updates, and addressing/filtering modes (`CREATE_TEXTURE`, `UPDATE_TEXTURE`, `SET_TEXTURE`).
-  - [x] Draw Calls: `DRAW_PRIMITIVE` and `DRAW_INDEXED_PRIMITIVE` piped to `gl.drawArrays` and `gl.drawElements`.
-  - [x] 19 unit tests passing (100% green) in `web/tests/d3d9_consumer.test.ts`.
-
-### Phase 5: Audio, Input, Asset Streaming & Web Application Shell [VERIFIED / IN ENGINE HOOKUP]
-- [x] **Step 5.1: DirectInput8 Keyboard, Gamepad & Touch Controls [VERIFIED]**:
-  - Authentic C99 `IDirectInput8A`, `IDirectInputDevice8A`, and `IDirectInputEffect` COM vtables in `runtime/dinput.c` and `runtime/dinput.h`.
-  - Exact 272-byte `DIJOYSTATE2` binary packing and lock-free 540-byte `dinput_shared_state_t` layout (`0x0200A000`).
-  - Browser keyboard adapter and Gamepad API bridge (`web/src/input.ts`).
-  - Mobile touch overlay (`web/src/touch.ts`) matching NFSU1 touch overlay with Buttons, Virtual Thumbstick, and Gyroscope Tilt modes, WakeLock, and gesture prevention.
-  - Unit tests verified in `tests/test_dinput.py`.
-- [x] **Step 5.2: DirectSound AudioWorklet Pipeline [VERIFIED]**:
-  - Authentic C99 `IDirectSound8` and `IDirectSoundBuffer8` COM vtables in `runtime/dsound.c` and `runtime/dsound.h`.
-  - Dual-buffer architecture with primary mix buffer and looping secondary PCM stream.
-  - Lock/Unlock circular PCM conversion (16-bit signed integer to float32 stereo) feeding into shared-memory `AudioRing`.
-  - Dedicated browser AudioWorklet processor (`web/src/audio_worklet.ts`) and gesture unlock pipeline (`web/src/audio.ts`).
-  - Unit tests verified in `tests/test_dsound.py`.
-- [x] **Step 5.3: OPFS Chunk-Based Asset Streaming & VFS [VERIFIED]**:
-  - Origin Private File System (`OPFS`) background worker (`web/src/io_worker.ts`) and memory cache fallback (`web/src/io_datacache.ts`).
-  - On-demand 1 MiB chunk streaming via HTTP Range requests for 5.6 GB authentic game assets (`GLOBAL`, `CARS`, `TRACKS`).
-  - Linear memory virtual file system bridge (`web/src/vfs.ts`) mapping file handles directly to guest `ReadFile` and CRT `fread`.
-  - Unit tests verified in `tests/test_io.py`.
-- [x] **Step 5.4: Web Application Shell & PWA [VERIFIED]**:
-  - Comprehensive browser application shell (`web/src/app.ts`) coordinating WebGL2 renderer, Web Audio, DirectInput/Gamepad/Touch input, OPFS asset streamer, and vehicle dynamics.
-  - Modern responsive dark-mode UI with customizable touch control scale, resolution scale, and telemetry HUD (`web/src/style.css`, `web/public/index.html`).
-
-### Phase 6: Racing Gameplay, Mobile Optimizations & Polish [ACTIVE / SUBSYSTEMS VERIFIED]
-- [x] **Step 6.1: Vehicle Dynamics & Race Simulation [VERIFIED]**:
-  - Complete 60 Hz client vehicle dynamics simulation (`web/src/sim.ts`) implementing rigid body kinematics, authentic ProStreet gear ratios, final drive, tire friction/slip, collision impulse response, and damage accumulation.
-  - Binary serialization of 256-byte vehicle records to guest memory.
-  - Unit tests verified in `tests/test_sim.py`.
-- [x] **Step 6.2: Mobile Performance Presets & Texture Transcoding [VERIFIED]**:
-  - Resolution scaling presets (`web/src/mobile_presets.ts`): 100% Native (1280x720), 75% Balanced (960x540), 50% Performance (640x360) with CSS hardware scaling.
-  - 4 graphics quality presets (`low`, `medium`, `high`, `ultra`) managing motion blur, depth of field, bloom, and soft shadows.
-  - Mobile GPU ASTC 4x4 texture compression and transcoding pipeline.
-- [ ] **Step 6.3: In-Game Racing & Full Engine Loop Integration [PENDING MAIN BOOT]**:
-  - End-to-end integration of authentic game physics, AI vehicle loops, and tracks once engine boot completes Phase 3.4.
-
----
-
-## Running Tests
-
-```powershell
-# 1. Run the complete Python test suite (275 tests, 100% passing)
-python -m unittest discover -s tests -v
-
-# 2. Run the SEH prolog/epilog & callee cleanup WASM verification
-node tests/test_seh_prolog_wasm.mjs
-
-# 3. Run the genuine ProStreet monolithic WASM startup diagnostic
-node tests/test_game_wasm.mjs
-
-# 4. Run the TypeScript D3D9 consumer test suite (19 unit tests)
-npx tsx web/tests/d3d9_consumer.test.ts
-
-# 5. Run the guest stack and argument setup verification (Stage 3 Task 3.1)
-node tests/test_guest_stack_arguments.mjs
-
-# 6. Rebuild the monolithic WebAssembly module
-python tools/build_wasm.py
-```
+# PortSpeed
+
+> **Experimental native browser port of Need for Speed: ProStreet (PC v1.1, 2007) via static x86 Ahead-Of-Time recompilation and WebAssembly.**
+
+---
+
+## Legal & Research Disclaimer
+
+**PortSpeed is an independent reverse-engineering, binary translation, and digital preservation research project.**
+- This project is **not** affiliated with, sponsored by, or endorsed by Electronic Arts, EA Black Box, or their licensors.
+- "Need for Speed" and "Need for Speed: ProStreet" are trademarks of Electronic Arts Inc.
+- **No copyrighted game assets, proprietary game executables, or original binary assets are distributed in this repository.** Users must supply their own legally purchased copy of *Need for Speed: ProStreet* (PC v1.1, `nfs.exe`).
+
+---
+
+## Architectural Foundation: Static AOT Binary Recompilation
+
+PortSpeed translates the original 2007 Windows x86 game code to modern web browsers via **Ahead-Of-Time (AOT) static binary recompilation** rather than instruction-by-instruction emulation or building a reimplemented racing clone:
+
+```mermaid
+graph TD
+    A["Original PC nfs.exe (28.7 MB)"] --> B["Phase 1: SecuROM Deobfuscation & Cataloging"]
+    B --> C["Phase 2: Static x86 -> C99 Lifter (36,391 functions, 32 shards)"]
+    C --> D["Phase 3: Platform Runtime & Engine Boot (Shared-WASM Threads, CRT, Win32)"]
+    D --> E["Phase 4: Direct3D 9 Command Ring Buffer & WebGPU / WebGL2"]
+    E --> F["Phase 5: AudioWorklet, DirectInput & OPFS Asset Streaming"]
+    F --> G["Phase 6: In-Game Racing Simulation & Gameplay Loop"]
+```
+
+1. **Static Ahead-Of-Time Lifter:** 36,391 authentic x86 functions cataloged and lifted into 32 modular C99 translation units (`gen/shard_0000.c` .. `gen/shard_0031.c`) with WebAssembly SIMD128 intrinsics, 80-bit precision x87 circular stack emulation, and bit-parallel arithmetic flag computation (`FLAGS_ADC_M`, `FLAGS_SBB_M`, `FLAGS_LOG_M`).
+2. **1:1 Guest Linear Memory Layout:** 704 MB shared WebAssembly linear memory (`IMAGE_BASE=0`, `0x00000000..0x2c000000`). Guest virtual addresses map directly to linear memory offsets without pointer translation overhead.
+3. **Master Dispatch Table (`g_dtab`):** Direct $O(1)$ function pointer array of 5,660,672 entries covering `0x00401000..0x00967000`, resolving direct and indirect dispatches at native speed.
+4. **Shared-WASM Threading & Control Mailbox:** Secondary Web Workers instantiate the identical WebAssembly module with imported shared memory. Per-worker C shadow stacks are strictly isolated in high linear memory (`0x2b000000..0x2c000000`, 2 MB each). Worker thread synchronization and scheduling operate via a dedicated Shared Control Mailbox (`0x00107000`) and native WebAssembly atomics (`memory.atomic.wait32` / `memory.atomic.notify`).
+5. **Clean CRT & Win32 Shim Layer:** Dynamic `MSVCR80.dll` IAT imports (156 functions) and Win32 imports (198 functions) shimmed in clean C99.
+6. **Zero Remake / Authentic Scope:** PortSpeed executes genuine game machine code. No synthetic tracks, placeholder vehicles, or hardcoded game loops exist.
+
+---
+
+## Current Engineering Status & Verified Reality
+
+> [!WARNING]
+> **Authenticity & Playability Status**:
+> - **The game is NOT yet playable in the browser.**
+> - **Original 3D world rendering, menus, and visual gameplay frames are NOT yet produced.**
+> - **Zero authentic rendered frames have been output to the screen.**
+> - The production WebAssembly binary [`build/game.wasm`](file:///c:/Users/tabat/OneDrive/Desktop/NFS-PortStreet-Project/build/game.wasm) (**62.34 MB**) builds cleanly with atomics and shared memory.
+> - In genuine WebAssembly execution under Node.js WASI, the engine executes all **960 / 960 static C++ initializers**, enters genuine `main()` ([`sub_004afee0`](file:///c:/Users/tabat/OneDrive/Desktop/NFS-PortStreet-Project/gen/shard_0002.c)), initializes engine subsystems, spawns and resumes two guest worker threads, authentically completes the streaming thread startup handshake, and executes **332,860 guest dispatches** before trapping.
+> - **Active Blocker:** A stack pointer divergence (`ESP = 0xff9bc0d0`) occurs at 332,860 dispatches inside vector destructor helper `sub_008285e8` (`__ehvec_dtor`), triggering an out-of-bounds linear memory trap.
+
+---
+
+## Detailed Milestone Status: Implemented vs. Pending
+
+| Subsystem / Feature | Status | Verification & Evidence |
+| :--- | :--- | :--- |
+| **SecuROM Deobfuscation** | **IMPLEMENTED & VERIFIED** | 220 `.text` + 294 `.securom` countdown stubs neutralized; 2,153 indirect trampolines resolved; stolen prologues recovered. |
+| **x86 to C99 Instruction Lifter** | **IMPLEMENTED & VERIFIED** | 36,391 functions lifted across 32 shards; SIMD128, 80-bit x87 FPU, atomic `lock xadd`/`cmpxchg`, bit-parallel flags. |
+| **Master Dispatch Table (`g_dtab`)** | **IMPLEMENTED & VERIFIED** | Direct $O(1)$ table covering `0x00401000..0x00967000` (5.6M entries); initialized in 3 ms. |
+| **C++ Static Initializers (`_initterm`)** | **IMPLEMENTED & VERIFIED** | All **960 / 960** initializers execute to completion in 144 ms with 0 unresolved dispatches. Constructor #169 verified. |
+| **Authentic `main()` Entry** | **IMPLEMENTED & VERIFIED** | `sub_004afee0` entered with valid Win32 arguments; root subsystems initialized (`sub_0090c8d0` obj=`0x22322f0`). |
+| **Shared-Memory WASM Multithreading** | **IMPLEMENTED & VERIFIED** | 4 Web Workers running with imported shared memory; C shadow stack isolated in `0x2b000000..0x2c000000`. |
+| **Shared Control Mailbox (`0x00107000`)** | **IMPLEMENTED & VERIFIED** | Atomics-based command wait/notify; decoupled from Node.js event-loop message starvation. |
+| **Authentic Worker Handshake** | **IMPLEMENTED & VERIFIED** | Worker Slot 1 executes authentic `sub_008976e4`, writes acknowledgment `[arglist]=1`, and enters `sub_008991ac` queue wait. |
+| **Engine Main Loop (`sub_006dba80`)** | **PARTIALLY WORKING** | Entered engine loop; handshake exited naturally; **332,860 dispatches executed** before trapping. |
+| **Vector Exception / Destructor Stack ABI** | **ACTIVE BLOCKER** | `sub_008285e8` (`__ehvec_dtor`) traps with `ESP = 0xff9bc0d0` due to frame-pointer divergence in `__EH_prolog`/`__EH_epilog`. |
+| **Direct3D 9 COM Shims & Ring Buffer** | **TESTED IN ISOLATION** | D3D9 vtables, 64-byte command ring buffer (`0x27810000`), 34 D3DX effects parsed, 597 shaders cataloged. |
+| **WebGL2 / WebGPU Host Consumer** | **TESTED IN ISOLATION** | Command processor (`web/src/d3d9_consumer.ts`) with draw calls and state mapping; 19 TypeScript unit tests passing. |
+| **DirectInput8 & AudioWorklet** | **TESTED IN ISOLATION** | DirectInput COM vtables, mobile touch overlay, AudioWorklet PCM circular stream verified in isolated harnesses. |
+| **OPFS Chunk Asset Streaming** | **TESTED IN ISOLATION** | OPFS streaming worker for 5.6 GB game assets with 1 MiB chunk caching. |
+| **First Authentic Rendered Frame** | **NOT YET IMPLEMENTED** | Blocked by Phase 3 engine startup trap (`sub_008285e8`) before reaching `sub_006dae50` / D3D9 present. |
+| **Authentic Racing Gameplay** | **NOT YET IMPLEMENTED** | Engine boot must complete before in-game Havok physics, AI, and race tracks activate. |
+
+---
+
+## Technical Architecture Deep Dive
+
+### 1. Memory Space Layout (704 MB Shared Linear Memory)
+
+```
+0x00000000 - 0x00100000 : Null-page guard (1 MB)
+0x00100000 - 0x00102000 : Main Thread TEB & SEH chain
+0x00102000 - 0x00104000 : Main Thread .tls private template copy
+0x00104000 - 0x00105000 : Main CPU register structure
+0x00105000 - 0x00107000 : Worker CPU register structures (8 x 1 KiB)
+0x00107000 - 0x00108000 : Shared Worker Control Mailbox (8 slots x 32 bytes)
+0x00108000 - 0x00110000 : Worker TEB blocks (8 x 4 KiB)
+0x00110000 - 0x00118000 : Worker .tls copies (8 x 4 KiB)
+0x00140000 - 0x00200000 : Worker x86 guest stacks (8 x 96 KiB)
+0x00200000 - 0x00400000 : Main x86 guest stack (2 MB, ESP starts at 0x003FF000)
+0x00400000 - 0x010ea000 : Authentic PE sections (.text, .rdata, .data, .tls, .rsrc, ars, est, artem, celare)
+0x019b1000 - 0x01f687e2 : Authentic .securom code segment
+0x02000000 - 0x27800000 : Dynamic Guest Heap (up to 600 MB)
+0x27800000 - 0x28000000 : Dedicated D3D9 Command Ring Buffer (8 MB)
+0x28000000 - 0x2a000000 : WASM C Heap & Dispatch Table (g_dtab at 0x28014c70)
+0x2b000000 - 0x2c000000 : Isolated Worker WASM C Shadow Stacks (0x2c000000 - slot * 2 MB)
+```
+
+### 2. Multi-Worker Shared WASM Concurrency
+
+The PC release of *Need for Speed: ProStreet* relies heavily on background threads created via `_beginthreadex` for asynchronous asset decompression and persistent streaming queue processing.
+
+To faithfully support this in WebAssembly:
+- Secondary Web Workers instantiate `game.wasm` sharing `env.memory`.
+- **C Shadow Stack Isolation:** Clang/LLVM WebAssembly binaries maintain a mutable shadow stack pointer `__stack_pointer`. When instantiating secondary modules, PortSpeed isolates each worker's `__stack_pointer` to `0x2c000000 - slot * 0x00200000`, preventing corruption of the main thread's spilled frame registers.
+- **Shared Control Mailbox:** Because Node.js and browser `postMessage` event queues are starved when the main thread executes synchronous WASM, workers communicate via atomic futexes in linear memory. Workers immediately enter `guest_worker_slot_run` upon startup and wait on `memory.atomic.wait32`. `ResumeThread` executes `memory.atomic.notify`, achieving instantaneous thread activation.
+- **Authentic Handshake:** Worker Slot 1 executes authentic `sub_008976e4`, which moves `1` into `[arglist]` (`[ebp-12]` on caller stack) and calls `sub_008991ac`. The main thread observes the write and exits its handshake loop naturally.
+
+---
+
+## Development & Verification Commands
+
+All commands are run from the project root:
+
+```powershell
+# 1. Run complete unit and regression test suite (55 tests, 100% green)
+python -m unittest tests.test_securom_lifting tests.test_trampoline_resolution tests.test_calling_convention_abi tests.test_cpu_heap_and_idiv tests.test_win32_shims tests.test_crt_shims tests.test_thread_recovery -v
+
+# 2. Run multi-worker scheduler integration test (verifies dual worker concurrency and authentic handshake)
+node --experimental-wasi-unstable-preview1 tests/test_multi_worker_scheduler.mjs
+
+# 3. Run authentic guest thread lifecycle verification
+node --experimental-wasi-unstable-preview1 tests/test_guest_thread_lifecycle.mjs
+
+# 4. Execute single supervised authentic full-game startup diagnostic (35-second hard timeout supervisor)
+python tools/run_diagnostic_timeout.py --timeout 35.0
+
+# 5. Compile production game.wasm binary (incremental content-hashed build)
+python tools/build_wasm.py --game -j 4
+```
+
+---
+
+## Active Blockers & Next Milestones
+
+1. **Gate 3 Blocker — `sub_008285e8` (`__ehvec_dtor`) Stack Frame Divergence:**
+   - Resolve the frame pointer and stack adjustment logic in MSVC structured exception handling helpers `sub_00828ebc` (`__EH_prolog`) and `sub_00828f01` (`__EH_epilog`), eliminating the `ESP = 0xff9bc0d0` out-of-bounds trap at 332,860 dispatches.
+2. **Gate 3 Blocker — Missing Destructor Callback `0x004b0100`:**
+   - Lift missing callback `0x004b0100` invoked from Worker Slot 0 (`0x009056eb`).
+3. **Gate 4 — First Authentic Engine Frame (`sub_006dae50`):**
+   - Advance through startup phase `sub_006daa70` into `sub_006d2df0` and the authentic frame tick `sub_006dae50`.
+   - Verify serialization of the first `D3D9_CMD_PRESENT` packet into the shared memory ring buffer (`0x27810000`).
+4. **Gate 5 — Browser Host Consumer & First Visible Output:**
+   - Connect the Web Worker host to the browser WebGL2 canvas and render the first authentic engine frame.

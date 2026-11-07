@@ -7,6 +7,7 @@
 #define PROSTREET_CPU_H
 
 #include <math.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -62,6 +63,59 @@ extern uint8_t *g_mem;
 #endif
 
 /* --------------------------------------------------------------------------
+ * Portable Shared-Memory Atomic & Futex Helpers (WASM Atomics + Host C99)
+ * -------------------------------------------------------------------------- */
+#if defined(__GNUC__) || defined(__clang__)
+#define PS_HOST_ATOMIC_LOAD32(p)             __atomic_load_n((uint32_t *)(p), __ATOMIC_ACQUIRE)
+#define PS_HOST_ATOMIC_STORE32(p, v)         __atomic_store_n((uint32_t *)(p), (uint32_t)(v), __ATOMIC_RELEASE)
+#define PS_HOST_ATOMIC_XCHG32(p, v)          __atomic_exchange_n((uint32_t *)(p), (uint32_t)(v), __ATOMIC_ACQ_REL)
+#define PS_HOST_ATOMIC_FETCH_ADD32(p, v)     __atomic_fetch_add((uint32_t *)(p), (uint32_t)(v), __ATOMIC_ACQ_REL)
+#define PS_HOST_ATOMIC_FETCH_OR32(p, v)      __atomic_fetch_or((uint32_t *)(p), (uint32_t)(v), __ATOMIC_ACQ_REL)
+#define PS_HOST_ATOMIC_FETCH_AND32(p, v)     __atomic_fetch_and((uint32_t *)(p), (uint32_t)(v), __ATOMIC_ACQ_REL)
+#define PS_HOST_ATOMIC_FETCH_XOR32(p, v)     __atomic_fetch_xor((uint32_t *)(p), (uint32_t)(v), __ATOMIC_ACQ_REL)
+#define PS_HOST_ATOMIC_CAS32(p, exp_p, des)  __atomic_compare_exchange_n((uint32_t *)(p), (uint32_t *)(exp_p), (uint32_t)(des), 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)
+#define PS_HOST_ATOMIC_LOAD64(p)             __atomic_load_n((uint64_t *)(p), __ATOMIC_ACQUIRE)
+#define PS_HOST_ATOMIC_CAS64(p, exp_p, des)  __atomic_compare_exchange_n((uint64_t *)(p), (uint64_t *)(exp_p), (uint64_t)(des), 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)
+#else
+static inline uint32_t ps_fallback_xchg32(volatile uint32_t *p, uint32_t v) { uint32_t o = *p; *p = v; return o; }
+static inline uint32_t ps_fallback_fadd32(volatile uint32_t *p, uint32_t v) { uint32_t o = *p; *p = o + v; return o; }
+static inline uint32_t ps_fallback_for32(volatile uint32_t *p, uint32_t v)  { uint32_t o = *p; *p = o | v; return o; }
+static inline uint32_t ps_fallback_fand32(volatile uint32_t *p, uint32_t v) { uint32_t o = *p; *p = o & v; return o; }
+static inline uint32_t ps_fallback_fxor32(volatile uint32_t *p, uint32_t v) { uint32_t o = *p; *p = o ^ v; return o; }
+static inline int ps_fallback_cas32(volatile uint32_t *p, uint32_t *e, uint32_t d) { uint32_t o = *p; if (o == *e) { *p = d; return 1; } *e = o; return 0; }
+static inline int ps_fallback_cas64(volatile uint64_t *p, uint64_t *e, uint64_t d) { uint64_t o = *p; if (o == *e) { *p = d; return 1; } *e = o; return 0; }
+#define PS_HOST_ATOMIC_LOAD32(p)             (*(volatile const uint32_t *)(p))
+#define PS_HOST_ATOMIC_STORE32(p, v)         (*(volatile uint32_t *)(p) = (uint32_t)(v))
+#define PS_HOST_ATOMIC_XCHG32(p, v)          ps_fallback_xchg32((volatile uint32_t *)(p), (uint32_t)(v))
+#define PS_HOST_ATOMIC_FETCH_ADD32(p, v)     ps_fallback_fadd32((volatile uint32_t *)(p), (uint32_t)(v))
+#define PS_HOST_ATOMIC_FETCH_OR32(p, v)      ps_fallback_for32((volatile uint32_t *)(p), (uint32_t)(v))
+#define PS_HOST_ATOMIC_FETCH_AND32(p, v)     ps_fallback_fand32((volatile uint32_t *)(p), (uint32_t)(v))
+#define PS_HOST_ATOMIC_FETCH_XOR32(p, v)     ps_fallback_fxor32((volatile uint32_t *)(p), (uint32_t)(v))
+#define PS_HOST_ATOMIC_CAS32(p, exp_p, des)  ps_fallback_cas32((volatile uint32_t *)(p), (uint32_t *)(exp_p), (uint32_t)(des))
+#define PS_HOST_ATOMIC_LOAD64(p)             (*(volatile const uint64_t *)(p))
+#define PS_HOST_ATOMIC_CAS64(p, exp_p, des)  ps_fallback_cas64((volatile uint64_t *)(p), (uint64_t *)(exp_p), (uint64_t)(des))
+#endif
+
+#define PS_ATOMIC_LOAD32(va)                 PS_HOST_ATOMIC_LOAD32(g_mem + (uint32_t)(va))
+#define PS_ATOMIC_STORE32(va, v)             PS_HOST_ATOMIC_STORE32(g_mem + (uint32_t)(va), (v))
+#define PS_ATOMIC_XCHG32(va, v)              PS_HOST_ATOMIC_XCHG32(g_mem + (uint32_t)(va), (v))
+#define PS_ATOMIC_FETCH_ADD32(va, v)         PS_HOST_ATOMIC_FETCH_ADD32(g_mem + (uint32_t)(va), (v))
+#define PS_ATOMIC_FETCH_OR32(va, v)          PS_HOST_ATOMIC_FETCH_OR32(g_mem + (uint32_t)(va), (v))
+#define PS_ATOMIC_FETCH_AND32(va, v)         PS_HOST_ATOMIC_FETCH_AND32(g_mem + (uint32_t)(va), (v))
+#define PS_ATOMIC_FETCH_XOR32(va, v)         PS_HOST_ATOMIC_FETCH_XOR32(g_mem + (uint32_t)(va), (v))
+#define PS_ATOMIC_CAS32(va, exp_p, des)      PS_HOST_ATOMIC_CAS32(g_mem + (uint32_t)(va), (exp_p), (des))
+
+#if defined(__wasm__) && defined(__wasm_atomics__)
+#define PS_WASM_HOST_WAIT32(p, exp, ns)      __builtin_wasm_memory_atomic_wait32((int *)(p), (int)(exp), (long long)(ns))
+#define PS_WASM_HOST_NOTIFY(p, cnt)          __builtin_wasm_memory_atomic_notify((int *)(p), (unsigned int)(cnt))
+#else
+#define PS_WASM_HOST_WAIT32(p, exp, ns)      ((void)(p), (void)(exp), (void)(ns), 2)
+#define PS_WASM_HOST_NOTIFY(p, cnt)          ((void)(p), (void)(cnt), 0)
+#endif
+#define PS_WASM_WAIT32(va, exp, ns)          PS_WASM_HOST_WAIT32(g_mem + (uint32_t)(va), (exp), (ns))
+#define PS_WASM_NOTIFY(va, cnt)              PS_WASM_HOST_NOTIFY(g_mem + (uint32_t)(va), (cnt))
+
+/* --------------------------------------------------------------------------
  * CPU Register Enumeration & State Structure
  * -------------------------------------------------------------------------- */
 enum { R_EAX=0, R_ECX, R_EDX, R_EBX, R_ESP, R_EBP, R_ESI, R_EDI };
@@ -99,7 +153,20 @@ typedef struct CPU {
 
     /* SSE / SSE2 registers (128-bit) */
     xmm_reg_t xmm[8];
+
+    /* Per-CPU diagnostic dispatch ring buffer (appended to preserve offsets 0..295) */
+    uint32_t trace_idx;
+    uint32_t trace_va[16];
+    uint32_t trace_esp[16];
 } CPU;
+
+static inline void cpu_trace_record(struct CPU *c, uint32_t addr) {
+    uint32_t slot = c->trace_idx & 15u;
+    c->trace_va[slot] = addr;
+    c->trace_esp[slot] = c->esp;
+    c->trace_idx = c->trace_idx + 1u;
+    c->eip = addr;
+}
 
 /* --------------------------------------------------------------------------
  * Dispatch Layer
@@ -123,7 +190,7 @@ static inline guest_fn_t dispatch_fast(uint32_t a) {
     uint32_t _dc = (uint32_t)(t_); \
     if (_dc >= 0x00967000u && _dc <= 0x00967650u) { (c_)->esp += 4u; } \
     guest_fn_t _df = dispatch_fast(_dc); \
-    if (_df) _df(c_); else dispatch_indirect((c_), _dc); \
+    if (_df) { cpu_trace_record((c_), _dc); _df(c_); } else dispatch_indirect((c_), _dc); \
 } while (0)
 
 #ifdef __wasm__
@@ -131,7 +198,7 @@ static inline guest_fn_t dispatch_fast(uint32_t a) {
     uint32_t _dc = (uint32_t)(t_); \
     if (_dc >= 0x00967000u && _dc <= 0x00967650u) { (c_)->esp += 4u; } \
     guest_fn_t _df = dispatch_fast(_dc); \
-    if (_df) { __attribute__((musttail)) return _df(c_); } \
+    if (_df) { cpu_trace_record((c_), _dc); __attribute__((musttail)) return _df(c_); } \
     (c_)->eip = _dc; __attribute__((musttail)) return dispatch_tail(c_); \
 }
 #else
@@ -479,12 +546,18 @@ static inline uint64_t x86_cvt_i64(double v) {
 #define WASM_SIMD_MULPS(d, s)  ((d).v = wasm_f32x4_mul((d).v, (s).v))
 #define WASM_SIMD_DIVPS(d, s)  ((d).v = wasm_f32x4_div((d).v, (s).v))
 #define WASM_SIMD_XORPS(d, s)  ((d).v = wasm_v128_xor((d).v, (s).v))
+#define WASM_SIMD_XORPD(d, s)  ((d).v = wasm_v128_xor((d).v, (s).v))
+#define WASM_SIMD_PXOR(d, s)   ((d).v = wasm_v128_xor((d).v, (s).v))
 #define WASM_SIMD_ANDPS(d, s)  ((d).v = wasm_v128_and((d).v, (s).v))
+#define WASM_SIMD_ANDPD(d, s)  ((d).v = wasm_v128_and((d).v, (s).v))
+#define WASM_SIMD_PAND(d, s)   ((d).v = wasm_v128_and((d).v, (s).v))
 #define WASM_SIMD_ORPS(d, s)   ((d).v = wasm_v128_or((d).v, (s).v))
+#define WASM_SIMD_ORPD(d, s)   ((d).v = wasm_v128_or((d).v, (s).v))
+#define WASM_SIMD_POR(d, s)    ((d).v = wasm_v128_or((d).v, (s).v))
 #define WASM_SIMD_ANDNPS(d, s) ((d).v = wasm_v128_andnot((s).v, (d).v))
-#define WASM_SIMD_MINPS(d, s)  ((d).v = wasm_f32x4_min((d).v, (s).v))
-#define WASM_SIMD_MAXPS(d, s)  ((d).v = wasm_f32x4_max((d).v, (s).v))
-#define WASM_SIMD_SQRTPS(d)    ((d).v = wasm_f32x4_sqrt((d).v))
+#define WASM_SIMD_MINPS(d, s)  ((d).v = wasm_f32x4_pmin((s).v, (d).v))
+#define WASM_SIMD_MAXPS(d, s)  ((d).v = wasm_f32x4_pmax((s).v, (d).v))
+#define WASM_SIMD_SQRTPS(d, s) ((d).v = wasm_f32x4_sqrt((s).v))
 #define WASM_SIMD_PADDD(d, s)  ((d).v = wasm_i32x4_add((d).v, (s).v))
 #define WASM_SIMD_PSUBD(d, s)  ((d).v = wasm_i32x4_sub((d).v, (s).v))
 #endif

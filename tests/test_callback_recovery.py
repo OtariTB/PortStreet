@@ -58,7 +58,8 @@ class TestCallbackRecovery(unittest.TestCase):
             off = va - 0x00401000
             self.assertIn(f"g_dtab[0x{off:08x}u] = {fname};", fntab_c, f"{fname} missing in g_dtab in fntab.c")
 
-        self.assertIn("fntab_init_recovered_callbacks();", fntab_c, "fntab_init_recovered_callbacks missing from fntab_init")
+        self.assertIn("void fntab_init(void)", fntab_c, "fntab_init missing from fntab.c")
+        self.assertIn("fntab_init_chunk_0();", fntab_c, "fntab_init_chunk_0 missing from fntab_init")
 
     def test_no_duplicate_shard_definitions(self):
         """Verify 0 duplicate function symbols across all 32 shard files."""

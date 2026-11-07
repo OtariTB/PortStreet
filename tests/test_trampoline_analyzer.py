@@ -154,27 +154,28 @@ class TestTrampolineAnalyzerIntegration(unittest.TestCase):
         self.assertEqual(summary["total_trampolines"], 2153)
         self.assertEqual(summary["types"]["vitality_call"], 934)
         self.assertEqual(summary["types"]["vitality_obf_push"], 919)
-        self.assertEqual(summary["types"]["plain_jump"], 146)
-        self.assertEqual(summary["types"]["plain_push_ret"], 126)
-        self.assertEqual(summary["types"]["plain_function"], 28)
+        self.assertEqual(summary["types"].get("plain_jump", 0), 0)
+        self.assertEqual(summary["types"].get("plain_push_ret", 0), 0)
+        self.assertEqual(summary["types"]["plain_function"], 300)
 
         # 934 + 919 = 1,853 ViTALiTY stubs
         self.assertEqual(
             summary["types"]["vitality_call"] + summary["types"]["vitality_obf_push"],
             1853,
         )
-        # 146 + 126 + 28 = 300 plain stubs
+        # All 300 plain_x86 stubs in nfs.exe are full .securom functions
         self.assertEqual(
-            summary["types"]["plain_jump"]
-            + summary["types"]["plain_push_ret"]
+            summary["types"].get("plain_jump", 0)
+            + summary["types"].get("plain_push_ret", 0)
             + summary["types"]["plain_function"],
             300,
         )
 
-        # Target section verification
-        self.assertEqual(summary["target_sections"][".text"], 1511)
-        self.assertEqual(summary["target_sections"][".securom"], 640)
-        self.assertEqual(summary["target_sections"]["ars"], 2)
+        # Target section verification (zero bogus 'ars' targets)
+        self.assertEqual(summary["target_sections"][".text"], 1279)
+        self.assertEqual(summary["target_sections"][".securom"], 874)
+        self.assertNotIn("ars", summary["target_sections"])
+        self.assertGreaterEqual(summary.get("securom_bridges_count", 0), 2153)
 
         # Exactly 2,153 entries in the list
         self.assertEqual(len(data["trampolines"]), 2153)
@@ -182,7 +183,7 @@ class TestTrampolineAnalyzerIntegration(unittest.TestCase):
         # Every entry has valid target and prologue
         for t in data["trampolines"]:
             self.assertGreater(t["target_va"], 0x00400000)
-            self.assertIn(t["target_section"], (".text", ".securom", "ars"))
+            self.assertIn(t["target_section"], (".text", ".securom"))
             self.assertIsInstance(t["prologue_asm"], list)
 
 

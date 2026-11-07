@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include "cpu.h"
 #include "memory.h"
 
@@ -243,26 +244,42 @@ uint32_t win32_create_event(void);
 void win32_signal_event(uint32_t h);
 void win32_reset_event(uint32_t h);
 uint32_t win32_get_event_state_addr(uint32_t h);
+FILE *win32_open_game_file(const char *guest_path, bool read_only);
 
 /* --------------------------------------------------------------------------
  * Guest Thread Management & Worker Loop API
  * -------------------------------------------------------------------------- */
 typedef struct {
-    uint32_t handle;
-    uint32_t thread_id;
-    uint32_t start_address;
-    uint32_t arglist;
-    uint32_t stack_size;
-    uint32_t initflag;
-    uint32_t cpu_va;
-    uint32_t stack_top_va;
-    uint32_t suspended;
-    uint32_t active;
+    uint32_t          handle;
+    uint32_t          thread_id;
+    uint32_t          start_address;
+    uint32_t          arglist;
+    uint32_t          stack_size;
+    uint32_t          initflag;
+    uint32_t          cpu_va;
+    uint32_t          teb_va;
+    uint32_t          stack_top_va;
+    uint32_t          suspended;
+    uint32_t          active;
+    uint32_t          exit_code;
+    volatile uint32_t signal;
 } guest_thread_desc_t;
+
+typedef struct {
+    volatile uint32_t state;        /* 0=UNINIT, 1=READY, 2=RUNNING, 3=TERMINATED */
+    volatile uint32_t signal;       /* 0=WAIT, 1=RUN, 2=STOP */
+    volatile uint32_t entry;        /* Guest function VA */
+    volatile uint32_t cpu_va;       /* Guest CPU VA */
+    volatile uint32_t completed;    /* Completed executions counter */
+    volatile uint32_t exit_code;    /* Last exit code */
+    uint32_t          reserved[2];  /* 32 bytes per worker slot */
+} guest_worker_mailbox_t;
 
 uint32_t win32_create_guest_thread(uint32_t start_addr, uint32_t arglist, uint32_t stack_sz, uint32_t initflag, uint32_t *out_tid);
 uint32_t win32_resume_guest_thread(uint32_t hThread);
 const guest_thread_desc_t *win32_get_guest_thread(uint32_t hThread);
+uint32_t win32_get_guest_thread_count(void);
+void guest_worker_slot_run(uint32_t slot_idx);
 void guest_worker_thread_run(uint32_t cpu_va);
 void guest_worker_thread_stop(void);
 

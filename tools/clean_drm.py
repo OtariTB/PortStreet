@@ -128,6 +128,48 @@ def apply_countdown_nops(text_bytes: bytes, stubs: Sequence[CountdownStub]) -> b
     return patched
 
 
+def patch_all_countdown_stubs(raw_exe: bytes, cs: Cs | None = None) -> bytes:
+    """Return a copy of a PE image with countdown stubs NOPped in both .text and .securom.
+
+    Non-PE synthetic test buffers are returned unchanged.
+    """
+    if len(raw_exe) < 0x40 or raw_exe[:2] != b"MZ":
+        return raw_exe
+    pe_off = struct.unpack_from("<I", raw_exe, 0x3C)[0]
+    if pe_off < 0 or pe_off + 24 > len(raw_exe) or raw_exe[pe_off : pe_off + 4] != b"PE\x00\x00":
+        return raw_exe
+
+    num_sections = struct.unpack_from("<H", raw_exe, pe_off + 6)[0]
+    opt_hdr_size = struct.unpack_from("<H", raw_exe, pe_off + 20)[0]
+    image_base = struct.unpack_from("<I", raw_exe, pe_off + 24 + 28)[0]
+    sec_table = pe_off + 24 + opt_hdr_size
+    if sec_table + num_sections * 40 > len(raw_exe):
+        return raw_exe
+
+    if cs is None:
+        cs = Cs(CS_ARCH_X86, CS_MODE_32)
+
+    patched: bytearray | None = None
+    for i in range(num_sections):
+        sec = raw_exe[sec_table + i * 40 : sec_table + (i + 1) * 40]
+        name = sec[:8].split(b"\x00")[0].decode("latin1")
+        if name not in (".text", ".securom"):
+            continue
+        vsize, rva, rsize, roff = struct.unpack_from("<4I", sec, 8)
+        scan_size = min(rsize, len(raw_exe) - roff) if roff < len(raw_exe) else 0
+        if scan_size < 12:
+            continue
+        sec_va = image_base + rva
+        sec_bytes = raw_exe[roff : roff + scan_size]
+        stubs = find_countdown_stubs(sec_va, roff, sec_bytes, cs=cs)
+        if stubs:
+            if patched is None:
+                patched = bytearray(raw_exe)
+            patched[roff : roff + scan_size] = apply_countdown_nops(sec_bytes, stubs)
+
+    return bytes(patched) if patched is not None else raw_exe
+
+
 def main() -> int:
     cfg_path = WORKSPACE / "config/local.json"
     if not cfg_path.exists():

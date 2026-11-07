@@ -1,19 +1,31 @@
-// Dedicated worker thread for authentic guest thread verification
+// Dedicated worker thread for authentic guest thread execution
 import { parentPort, workerData } from 'node:worker_threads';
 import fs from 'node:fs';
 import { WASI } from 'node:wasi';
 
-const { wasmPath, sharedMemory, workerCpuVa } = workerData;
+const { wasmPath, sharedMemory, workerCpuVa, gameDir } = workerData;
+const workerSlot = workerData.workerSlot !== undefined
+    ? workerData.workerSlot
+    : Math.max(0, Math.floor((workerCpuVa - 0x00105000) / 0x0400));
 
 const wasmBytes = fs.readFileSync(wasmPath);
 const wasmModule = new WebAssembly.Module(wasmBytes);
 
-// WASI preview1 imports for worker instance
-const wasi = new WASI({ version: 'preview1' });
+// WASI preview1 imports for worker instance (including read-only /game mount when provided)
+const wasiOpts = {
+    version: 'preview1',
+    env: {
+        ...process.env,
+        ...(gameDir ? { PROSTREET_GAME_DIR: '/game' } : {}),
+    },
+};
+if (gameDir && fs.existsSync(gameDir)) {
+    wasiOpts.preopens = { '/game': gameDir };
+}
+const wasi = new WASI(wasiOpts);
 const baseWasi = wasi.wasiImport || (wasi.getImportObject && wasi.getImportObject().wasi_snapshot_preview1) || {};
 
-// In secondary worker threads sharing linear memory, do NOT re-run _initialize (which corrupts CRT).
-// Provide fd_write bound to sharedMemory so printf/fflush works on worker threads without error.
+// Bind WASI internal memory reference for preopened fd_read/path_open without invoking _initialize()
 const importObject = {
     wasi_snapshot_preview1: {
         ...baseWasi,
@@ -41,24 +53,52 @@ const importObject = {
 
 const instance = new WebAssembly.Instance(wasmModule, importObject);
 
-parentPort.postMessage({ type: 'READY' });
+// Bind WASI memory to instance without calling CRT _initialize (via dummy wrapper with empty _initialize)
+if (wasi.initialize && gameDir && fs.existsSync(gameDir)) {
+    try {
+        wasi.initialize({
+            exports: {
+                memory: sharedMemory,
+                _initialize: () => {},
+            },
+        });
+    } catch (_) {}
+}
+
+// CRITICAL: Isolate per-worker C/WASM shadow stack (__stack_pointer) in [0x2a000000..0x2c000000]
+// so worker threads NEVER collide with the main thread's C stack!
+const WORKER_SHADOW_STACK_TOP = 0x2c000000 - workerSlot * 0x00200000;
+if (instance.exports.__stack_pointer) {
+    instance.exports.__stack_pointer.value = WORKER_SHADOW_STACK_TOP;
+}
+
+parentPort.postMessage({ type: 'READY', slot: workerSlot, shadowStackTop: WORKER_SHADOW_STACK_TOP });
+
+// Automatically enter the worker run loop on next tick.
+// guest_worker_slot_run writes state=1 (READY) into GUEST_WORKER_MAILBOX_VA (0x00107000)
+// and enters memory.atomic.wait32 on &g_guest_threads[slot].signal.
+// This decouples guest thread wakeup from Node.js parentPort message loops.
+setImmediate(() => {
+    try {
+        if (instance.exports.guest_worker_slot_run) {
+            instance.exports.guest_worker_slot_run(workerSlot);
+        } else {
+            instance.exports.guest_worker_thread_run(workerCpuVa);
+        }
+        parentPort.postMessage({ type: 'LOOP_EXITED', slot: workerSlot });
+    } catch (err) {
+        parentPort.postMessage({ type: 'ERROR', slot: workerSlot, error: err.message, stack: err.stack });
+    }
+});
 
 parentPort.on('message', (msg) => {
     if (msg.type === 'START') {
         const { targetVa } = msg;
         try {
             const res = instance.exports.dispatch_indirect(workerCpuVa, targetVa);
-            parentPort.postMessage({ type: 'DONE', result: res });
+            parentPort.postMessage({ type: 'DONE', slot: workerSlot, result: res });
         } catch (err) {
-            parentPort.postMessage({ type: 'ERROR', error: err.message, stack: err.stack });
-        }
-    } else if (msg.type === 'RUN_LOOP') {
-        try {
-            parentPort.postMessage({ type: 'LOOP_STARTED' });
-            instance.exports.guest_worker_thread_run(workerCpuVa);
-            parentPort.postMessage({ type: 'LOOP_EXITED' });
-        } catch (err) {
-            parentPort.postMessage({ type: 'ERROR', error: err.message, stack: err.stack });
+            parentPort.postMessage({ type: 'ERROR', slot: workerSlot, error: err.message, stack: err.stack });
         }
     }
 });

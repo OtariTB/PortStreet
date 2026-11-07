@@ -12,7 +12,7 @@ class TestThreadRecovery(unittest.TestCase):
         self.cat_path = ROOT_DIR / "research" / "local" / "phase1" / "catalog.json"
         self.fntab_h_path = ROOT_DIR / "gen" / "fntab.h"
         self.fntab_c_path = ROOT_DIR / "gen" / "fntab.c"
-        self.shard22_path = ROOT_DIR / "gen" / "shard_0022.c"
+        self.shard23_path = ROOT_DIR / "gen" / "shard_0023.c"
 
     def test_recovered_thread_functions_in_catalog(self):
         """Verify sub_008976e4 and sub_008991ac are present in catalog.json with correct metadata."""
@@ -44,9 +44,9 @@ class TestThreadRecovery(unittest.TestCase):
         self.assertIn(f"g_dtab[0x{slot1:08x}u] = sub_008976e4;", c_text)
         self.assertIn(f"g_dtab[0x{slot2:08x}u] = sub_008991ac;", c_text)
 
-    def test_authentic_instructions_in_shard22(self):
+    def test_authentic_instructions_in_shard23(self):
         """Verify authentic assembly semantics in lifted C99 code."""
-        code = self.shard22_path.read_text(encoding="utf-8")
+        code = self.shard23_path.read_text(encoding="utf-8")
 
         # Verify sub_008976e4 contains authentic mov [eax], 1 (acknowledgment write)
         self.assertIn("void sub_008976e4(CPU *c)", code)

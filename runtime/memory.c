@@ -139,21 +139,18 @@ uint32_t guest_virtual_alloc(uint32_t target_va, uint32_t size, uint32_t alloc_t
     uint32_t aligned_size = (size + GUEST_PAGE_SIZE - 1u) & ~(GUEST_PAGE_SIZE - 1u);
 
     if (target_va == 0) {
-        /* Align heap bump pointer to 64 KiB boundary */
-        s_heap_cur = (s_heap_cur + 0xFFFFu) & ~0xFFFFu;
-        target_va = s_heap_cur;
-        if ((uint64_t)target_va + (uint64_t)aligned_size > (uint64_t)GUEST_HEAP_LIMIT) {
+        /* Atomically allocate 64 KiB-aligned region from shared heap */
+        target_va = guest_heap_alloc(aligned_size, 0x10000u);
+        if (target_va == 0) {
             return 0;
         }
-        s_heap_cur += aligned_size;
     } else {
         if ((uint64_t)target_va + (uint64_t)aligned_size > (uint64_t)GUEST_HEAP_LIMIT) {
             return 0;
         }
-    }
-
-    if (!guest_is_valid_va(target_va, aligned_size)) {
-        return 0;
+        if (!guest_is_valid_va(target_va, aligned_size)) {
+            return 0;
+        }
     }
 
     if (alloc_type & GUEST_MEM_COMMIT) {
@@ -179,14 +176,14 @@ uint32_t guest_heap_alloc(uint32_t size, uint32_t alignment) {
     if (alignment < 4) alignment = 4;
 
     uint32_t mask = alignment - 1u;
-    uint32_t cur = __atomic_load_n(&s_heap_cur, __ATOMIC_RELAXED);
+    uint32_t cur = PS_HOST_ATOMIC_LOAD32(&s_heap_cur);
     while (1) {
         uint32_t allocated = (cur + mask) & ~mask;
         if ((uint64_t)allocated + (uint64_t)size > (uint64_t)GUEST_HEAP_LIMIT) {
             return 0;
         }
         uint32_t next = allocated + size;
-        if (__atomic_compare_exchange_n(&s_heap_cur, &cur, next, false, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
+        if (PS_HOST_ATOMIC_CAS32(&s_heap_cur, &cur, next)) {
             if (!guest_is_valid_va(allocated, size)) {
                 return 0;
             }
@@ -195,17 +192,44 @@ uint32_t guest_heap_alloc(uint32_t size, uint32_t alignment) {
     }
 }
 
+void guest_init_worker_teb_slot(struct CPU *c, uint32_t slot_idx) {
+    if (c == NULL) return;
+    if (slot_idx >= GUEST_MAX_WORKERS) slot_idx = 0;
+
+    uint32_t teb_va   = GUEST_WORKER_TEB_ADDR_N(slot_idx);
+    uint32_t tls_va   = GUEST_WORKER_TLS_ADDR_N(slot_idx);
+    uint32_t stk_top  = GUEST_WORKER_STACK_TOP_N(slot_idx);
+    uint32_t stk_bot  = GUEST_WORKER_STACK_BOTTOM_N(slot_idx);
+    uint32_t tid      = 0x00002001u + slot_idx;
+
+    memset(g_mem + teb_va, 0, 0x1000u);
+    memcpy(g_mem + tls_va, g_mem + GUEST_TLS_START, 0x1000u);
+
+    MR32(teb_va + 0x00u) = 0xFFFFFFFFu;          /* SEH frame head */
+    MR32(teb_va + 0x04u) = stk_top;              /* Stack Base */
+    MR32(teb_va + 0x08u) = stk_bot;              /* Stack Limit */
+    MR32(teb_va + 0x18u) = teb_va;               /* Self-pointer to TEB */
+    MR32(teb_va + 0x20u) = 0x00001000u;          /* Simulated PID */
+    MR32(teb_va + 0x24u) = tid;                  /* Simulated Worker TID */
+    MR32(teb_va + 0x2cu) = teb_va + 0x100u;      /* ThreadLocalStoragePointer */
+    MR32(teb_va + 0x30u) = GUEST_TEB_ADDR + 0x1800u; /* Simulated PEB */
+    MR32(teb_va + 0x100u) = tls_va;              /* TLS module 0 array pointer */
+
+    c->fcw = 0x037Fu;
+    c->fsw = 0;
+    c->top = 0;
+    c->fs_base = teb_va;
+}
+
 void guest_init_worker_teb(struct CPU *c) {
     if (c == NULL) return;
-    MR32(GUEST_WORKER_TEB_ADDR + 0x00u) = 0xFFFFFFFFu;               /* SEH frame head */
-    MR32(GUEST_WORKER_TEB_ADDR + 0x04u) = GUEST_WORKER_STACK_TOP;   /* Stack Base */
-    MR32(GUEST_WORKER_TEB_ADDR + 0x08u) = GUEST_WORKER_STACK_BOTTOM;/* Stack Limit */
-    MR32(GUEST_WORKER_TEB_ADDR + 0x18u) = GUEST_WORKER_TEB_ADDR;    /* Self-pointer to TEB */
-    MR32(GUEST_WORKER_TEB_ADDR + 0x20u) = 0x00001000u;               /* Simulated PID */
-    MR32(GUEST_WORKER_TEB_ADDR + 0x24u) = 0x00001002u;               /* Simulated Worker TID */
-    MR32(GUEST_WORKER_TEB_ADDR + 0x2cu) = GUEST_TEB_ADDR + 0x100u;   /* ThreadLocalStoragePointer */
-    MR32(GUEST_WORKER_TEB_ADDR + 0x30u) = GUEST_TEB_ADDR + 0x1000u;  /* Simulated PEB */
-    c->fs_base = GUEST_WORKER_TEB_ADDR;
+    uint32_t cpu_va = host_to_guest(c);
+    uint32_t slot_idx = 0;
+    if (cpu_va >= GUEST_WORKER_CPU_ADDR &&
+        cpu_va < GUEST_WORKER_CPU_ADDR + GUEST_MAX_WORKERS * GUEST_WORKER_CPU_STRIDE) {
+        slot_idx = (cpu_va - GUEST_WORKER_CPU_ADDR) / GUEST_WORKER_CPU_STRIDE;
+    }
+    guest_init_worker_teb_slot(c, slot_idx);
 }
 
 void guest_cpu_init(struct CPU *c, uint32_t entry_point) {
@@ -228,7 +252,11 @@ void guest_cpu_init(struct CPU *c, uint32_t entry_point) {
     if (GUEST_MEM_READY) {
         MR32(c->esp) = 0xDEADF00Du;
 
+        /* Copy 4 KiB .tls template into Main Thread's private TLS page */
+        memcpy(g_mem + GUEST_MAIN_TLS_COPY_ADDR, g_mem + GUEST_TLS_START, 0x1000u);
+
         /* Initialize Win32 TEB and TLS layout at GUEST_TEB_ADDR (0x00100000) */
+        memset(g_mem + GUEST_TEB_ADDR, 0, 0x1000u);
         MR32(GUEST_TEB_ADDR + 0x00u) = 0xFFFFFFFFu;               /* SEH frame head */
         MR32(GUEST_TEB_ADDR + 0x04u) = GUEST_STACK_TOP;           /* Stack Base */
         MR32(GUEST_TEB_ADDR + 0x08u) = GUEST_STACK_BOTTOM;        /* Stack Limit */
@@ -236,8 +264,8 @@ void guest_cpu_init(struct CPU *c, uint32_t entry_point) {
         MR32(GUEST_TEB_ADDR + 0x20u) = 0x00001000u;               /* Simulated PID */
         MR32(GUEST_TEB_ADDR + 0x24u) = 0x00001001u;               /* Simulated TID */
         MR32(GUEST_TEB_ADDR + 0x2cu) = GUEST_TEB_ADDR + 0x100u;   /* ThreadLocalStoragePointer */
-        MR32(GUEST_TEB_ADDR + 0x30u) = GUEST_TEB_ADDR + 0x1000u;  /* Simulated PEB */
-        MR32(GUEST_TEB_ADDR + 0x100u) = GUEST_TEB_ADDR + 0x200u;  /* TLS module 0 array pointer */
+        MR32(GUEST_TEB_ADDR + 0x30u) = GUEST_TEB_ADDR + 0x1800u;  /* Simulated PEB */
+        MR32(GUEST_TEB_ADDR + 0x100u) = GUEST_MAIN_TLS_COPY_ADDR; /* TLS module 0 array pointer */
     }
 }
 

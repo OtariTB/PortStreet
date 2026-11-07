@@ -186,15 +186,18 @@ GAME_EXPORTS = [
 
     "guest_memory_init",
     "guest_init_worker_teb",
+    "guest_init_worker_teb_slot",
     "boot_bind_iats",
     "win32_create_event",
     "win32_signal_event",
     "win32_reset_event",
     "win32_get_event_state_addr",
+    "guest_worker_slot_run",
     "guest_worker_thread_run",
     "guest_worker_thread_stop",
     "win32_resume_guest_thread",
     "win32_create_guest_thread",
+    "win32_get_guest_thread_count",
 
     "g_dtab",
 
@@ -252,7 +255,7 @@ GAME_LDFLAGS = [
     "-Wl,--initial-memory=2c000000",   # 704 MB (0x2c000000)
     "-Wl,--max-memory=2c000000",
     "-Wl,--global-base=28000000",      # 640 MB (0x28000000) - places g_dtab & BSS above 640MB guest heap
-    "-Wl,-z,stack-size=65536",          # 64 KB WASM stack in null-guard page
+    "-Wl,-z,stack-size=1048576",       # 1 MB WASM C stack for main thread above BSS
     "-Wl,--export=__stack_pointer",
 ] + [f"-Wl,--export={exp}" for exp in GAME_EXPORTS]
 
@@ -406,25 +409,33 @@ def discover_sources() -> tuple[list[Path], Path, list[Path]]:
 
 def compute_header_hash() -> str:
 
-    """Computes a SHA-256 fingerprint over all runtime C headers."""
+    """Computes a SHA-256 fingerprint over all runtime and generated C headers."""
 
     h = hashlib.sha256()
 
-    for name in sorted(RUNTIME_H_FILES):
-
-        p = RUNTIME_DIR / name
+    for p in sorted(RUNTIME_DIR.glob("*.h")):
 
         if p.is_file():
 
+            h.update(p.name.encode("utf-8"))
+
             h.update(p.read_bytes())
 
-    for name in ["cpu.h", "memory.h", "win32.h", "crt.h", "initterm.h"]:
+    fntab_h = GEN_DIR / "fntab.h"
 
-        include_p = ROOT_DIR / "include" / name
+    if fntab_h.is_file():
 
-        if include_p.is_file():
+        h.update(b"gen/fntab.h")
 
-            h.update(include_p.read_bytes())
+        h.update(fntab_h.read_bytes())
+
+    for p in sorted((ROOT_DIR / "include").glob("*.h")):
+
+        if p.is_file():
+
+            h.update(p.name.encode("utf-8"))
+
+            h.update(p.read_bytes())
 
     return h.hexdigest()
 
@@ -814,25 +825,45 @@ def compile_single_source(src: Path, obj: Path, cc: str, flags: list[str], cache
 
 
 
-def compile_file(src: Path, obj: Path, cc_cmd: list[str]) -> tuple[str, bool, float, str]:
+def compile_file(src: Path, obj: Path, cc_cmd: list[str], header_hash: str) -> tuple[str, bool, float, str]:
 
     t0 = time.time()
 
-    if obj.exists() and obj.stat().st_size > 0 and obj.stat().st_mtime >= src.stat().st_mtime:
+    flags_str = " ".join(cc_cmd + GAME_CFLAGS)
 
-        return src.name, True, 0.0, "cached"
+    cache_key = compute_file_hash(src, header_hash, flags_str)
 
+    tag_file = obj.with_suffix(".o.sha256")
 
+    if obj.exists() and obj.stat().st_size > 0 and tag_file.is_file():
+
+        try:
+
+            if tag_file.read_text(encoding="utf-8").strip() == cache_key:
+
+                return src.name, True, 0.0, "cached"
+
+        except OSError:
+
+            pass
 
     cmd = cc_cmd + GAME_CFLAGS + ["-c", str(src), "-o", str(obj)]
 
-    res = subprocess.run(cmd, cwd=str(ROOT_DIR), capture_output=True, text=True)
+    res = subprocess.run(cmd, cwd=str(ROOT_DIR), capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     dt = time.time() - t0
 
     if res.returncode != 0:
 
         return src.name, False, dt, res.stderr + res.stdout
+
+    try:
+
+        tag_file.write_text(cache_key, encoding="utf-8")
+
+    except OSError:
+
+        pass
 
     return src.name, True, dt, ""
 
@@ -920,13 +951,15 @@ def build_game_wasm(jobs: int = 4, custom_cc: str | None = None) -> int:
 
 
 
+    header_hash = compute_header_hash()
+
     tasks = [(src, OBJ_DIR / (src.stem + ".o")) for src in all_sources]
 
     failed = False
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
 
-        futures = {executor.submit(compile_file, src, obj, cc_cmd): src.name for src, obj in tasks}
+        futures = {executor.submit(compile_file, src, obj, cc_cmd, header_hash): src.name for src, obj in tasks}
 
         for fut in concurrent.futures.as_completed(futures):
 
@@ -1065,6 +1098,16 @@ def main():
         return 0
 
 
+
+    if args.clean:
+
+        for d in (OBJ_DIR, CACHE_DIR):
+
+            if d.exists():
+
+                print(f"Cleaning cache: {d}")
+
+                shutil.rmtree(d)
 
     # Default build mode: If --game or if a valid WebAssembly toolchain is present and --synthetic-wasm not explicitly asked
 

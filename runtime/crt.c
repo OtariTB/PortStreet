@@ -513,7 +513,8 @@ void crt_shim_fclose(CPU *c) {
 void crt_shim_fopen(CPU *c) {
     const char *fn = guest_str(MR32(c->esp));
     const char *md = guest_str(MR32(c->esp + 4));
-    FILE *fp = fopen(fn, md);
+    bool read_only = (strchr(md, 'w') == NULL && strchr(md, 'a') == NULL && strchr(md, '+') == NULL);
+    FILE *fp = win32_open_game_file(fn, read_only);
     if (!fp) { c->eax = 0; return; }
     int slot = guest_alloc_file(fp, fn);
     c->eax = slot >= 0 ? (uint32_t)slot : 0;
@@ -1077,8 +1078,8 @@ void crt_shim__write(CPU *c) {
 void crt_shim_mangled_open(CPU *c) {
     const char *fn = guest_str(MR32(c->esp));
     int oflag      = (int)MR32(c->esp + 4);
-    (void)oflag;
-    FILE *fp = fopen(fn, "rb");
+    bool read_only = ((oflag & 0x0003) == 0);
+    FILE *fp = win32_open_game_file(fn, read_only);
     if (!fp) { c->eax = (uint32_t)-1; return; }
     int slot = guest_alloc_file(fp, fn);
     c->eax = slot >= 0 ? (uint32_t)slot : (uint32_t)-1;

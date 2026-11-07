@@ -43,6 +43,7 @@ def generate_fntab_header(functions: Sequence[dict[str, Any]]) -> str:
         "#ifndef PROSTREET_FNTAB_H",
         "#define PROSTREET_FNTAB_H",
         "",
+        "#include <stdio.h>",
         "#include <stdint.h>",
         '#include "runtime/cpu.h"',
         '#include "runtime/memory.h"',
@@ -122,15 +123,30 @@ def generate_fntab_source(
             lines.append(f"    g_dtab[0x{offset:08x}u] = sub_{f['address']:08x};")
         lines.append("}\n")
 
-    # Trampoline entries in g_dtab
+    # Trampoline entries in g_dtab and non-text dispatch_indirect aliases
     t_entries = []
+    non_text_aliases: dict[int, int] = {}
     if trampoline_data:
         fn_addrs = {f["address"] for f in functions}
-        for t in trampoline_data.get("trampolines", []):
-            s_va = t.get("site_va", 0)
-            t_va = t.get("target_va", 0)
-            if DISPATCH_TEXT_BASE <= s_va < DISPATCH_TEXT_END and t_va in fn_addrs:
-                t_entries.append((s_va - DISPATCH_TEXT_BASE, t_va))
+        all_records = list(trampoline_data.get("trampolines", [])) + list(
+            trampoline_data.get("securom_bridges", [])
+        )
+        seen_text_off: set[int] = set()
+        for t in all_records:
+            t_va = int(t.get("target_va", 0))
+            if t_va not in fn_addrs:
+                continue
+            for alias_key in ("site_va", "stub_va"):
+                a_va = int(t.get(alias_key, 0))
+                if not a_va or a_va == t_va:
+                    continue
+                if DISPATCH_TEXT_BASE <= a_va < DISPATCH_TEXT_END:
+                    off = a_va - DISPATCH_TEXT_BASE
+                    if off not in seen_text_off and a_va not in fn_addrs:
+                        seen_text_off.add(off)
+                        t_entries.append((off, t_va))
+                elif a_va not in fn_addrs and a_va not in non_text_aliases:
+                    non_text_aliases[a_va] = t_va
         t_entries.sort(key=lambda x: x[0])
 
     if t_entries:
@@ -173,6 +189,7 @@ def generate_fntab_source(
         "}",
         "",
         "void dispatch_indirect(struct CPU *c, uint32_t addr) {",
+        "    if (c) cpu_trace_record(c, addr);",
         "    uint32_t off = addr - DISPATCH_TEXT_BASE;",
         "    if (off < DISPATCH_TEXT_SIZE) {",
         "        guest_fn_t fn = g_dtab[off];",
@@ -183,26 +200,31 @@ def generate_fntab_source(
 
     for f in non_text_funcs:
         lines.append(f"    case 0x{f['address']:08x}u: sub_{f['address']:08x}(c); return;")
+    for alias_va in sorted(non_text_aliases):
+        target_va = non_text_aliases[alias_va]
+        lines.append(f"    case 0x{alias_va:08x}u: sub_{target_va:08x}(c); return;")
 
     lines.extend([
         "    default:",
-        "        c->eip = addr;",
-        "        s_unresolved_count++;",
-        "        uint32_t ret_addr = (c && c->esp >= 0x00200000 && c->esp < 0x00400000) ? MR32(c->esp) : 0;",
+        "        if (c) c->eip = addr;",
+        "        PS_HOST_ATOMIC_FETCH_ADD32(&s_unresolved_count, 1u);",
+        "        uint32_t ret_addr = (c && c->esp >= 0x00140000u && c->esp < 0x00400000u) ? MR32(c->esp) : 0;",
         "        int found = 0;",
         "        for (uint32_t i = 0; i < s_unresolved_unique; i++) {",
         "            if (s_unresolved_dispatches[i].target_va == addr) {",
-        "                s_unresolved_dispatches[i].count++;",
+        "                PS_HOST_ATOMIC_FETCH_ADD32(&s_unresolved_dispatches[i].count, 1u);",
         "                found = 1;",
         "                break;",
         "            }",
         "        }",
         "        if (!found && s_unresolved_unique < MAX_UNRESOLVED_RECORDED) {",
-        "            s_unresolved_dispatches[s_unresolved_unique].target_va = addr;",
-        "            s_unresolved_dispatches[s_unresolved_unique].call_site_ret = ret_addr;",
-        "            s_unresolved_dispatches[s_unresolved_unique].esp = c ? c->esp : 0;",
-        "            s_unresolved_dispatches[s_unresolved_unique].count = 1;",
-        "            s_unresolved_unique++;",
+        "            uint32_t slot = PS_HOST_ATOMIC_FETCH_ADD32(&s_unresolved_unique, 1u);",
+        "            if (slot < MAX_UNRESOLVED_RECORDED) {",
+        "                s_unresolved_dispatches[slot].target_va = addr;",
+        "                s_unresolved_dispatches[slot].call_site_ret = ret_addr;",
+        "                s_unresolved_dispatches[slot].esp = c ? c->esp : 0;",
+        "                s_unresolved_dispatches[slot].count = 1;",
+        "            }",
         "        }",
         '        fprintf(stderr, "[DISPATCH] Unresolved indirect target: 0x%08x (esp=0x%08x [esp]=0x%08x)\\n", addr, c ? c->esp : 0, ret_addr);',
         "        return;",
@@ -227,6 +249,7 @@ def generate_shards(
     enable_flagabi: bool = True,
     flifter: FunctionLifter | None = None,
     progress_callback: Any = None,
+    include_manual_overrides: bool | None = None,
 ) -> dict[str, Any]:
     """Generates all C shards and the master dispatch table.
 
@@ -235,12 +258,16 @@ def generate_shards(
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    from tools.manual_overrides import ADDITIONAL_FUNCTIONS
+    if include_manual_overrides is None:
+        include_manual_overrides = len(raw_exe) >= DISPATCH_TEXT_SIZE
+
     known_addrs = {f["address"] for f in catalog["functions"]}
     all_funcs = list(catalog["functions"])
-    for va in ADDITIONAL_FUNCTIONS:
-        if va not in known_addrs:
-            all_funcs.append({"address": va, "blocks": []})
+    if include_manual_overrides:
+        from tools.manual_overrides import ADDITIONAL_FUNCTIONS
+        for va in ADDITIONAL_FUNCTIONS:
+            if va not in known_addrs:
+                all_funcs.append({"address": va, "blocks": []})
     sorted_funcs = sorted(all_funcs, key=lambda f: f["address"])
     if max_functions is not None:
         sorted_funcs = sorted_funcs[:max_functions]
@@ -290,6 +317,7 @@ def generate_shards(
             " * Auto-generated by tools/generate_shards.py for NFS ProStreet.",
             " */",
             "#define PROSTREET_LREGS 1",
+            "#include <stdio.h>",
             '#include "gen/fntab.h"',
             "",
         ]

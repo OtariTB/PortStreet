@@ -4,10 +4,17 @@
  * in the static catalog (such as small constructors passed as code pointers,
  * callbacks, and runtime-generated material shaders).
  */
+#undef PROSTREET_LREGS
 #include "cpu.h"
 #include "memory.h"
 #include <stdio.h>
 #include <stdlib.h>
+
+#define FLAGS_ADD(a, b, res, bits)         FLAGS_ADD_M(a, b, res, bits, F_ALL)
+#define FLAGS_SUB(a, b, res, bits)         FLAGS_SUB_M(a, b, res, bits, F_ALL)
+#define FLAGS_ADC(a, b, cin, res, bits)    FLAGS_ADC_M(a, b, cin, res, bits, F_ALL)
+#define FLAGS_SBB(a, b, cin, res, bits)    FLAGS_SBB_M(a, b, cin, res, bits, F_ALL)
+#define FLAGS_LOG(res, bits)               FLAGS_LOG_M(res, bits, F_ALL)
 
 #ifndef __wasm__
 extern uint8_t *g_mem;

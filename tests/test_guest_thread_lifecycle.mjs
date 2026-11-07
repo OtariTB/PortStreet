@@ -96,10 +96,15 @@ async function run() {
         worker.on('error', reject);
     });
 
-    // Start worker loop in background
-    worker.postMessage({ type: 'RUN_LOOP' });
-    await new Promise(r => setTimeout(r, 20));
-    console.log('[TEST] PASS: Worker thread active and waiting in guest_worker_thread_run loop.');
+    // Wait for worker to enter guest_worker_slot_run via shared control mailbox
+    const GUEST_WORKER_MAILBOX_VA = 0x00107000;
+    const mbI32 = new Int32Array(sharedMemory.buffer, GUEST_WORKER_MAILBOX_VA, 64);
+    const tMb = Date.now();
+    while (Atomics.load(mbI32, 0) !== 1) {
+        if (Date.now() - tMb > 5000) throw new Error('Worker failed to reach READY state in mailbox');
+        Atomics.wait(mbI32, 0, 0, 50);
+    }
+    console.log('[TEST] PASS: Worker thread active and waiting in guest_worker_slot_run loop.');
 
     // 5. TEST: Call _beginthreadex with CREATE_SUSPENDED (initflag = 4)
     console.log('[TEST] Invoking _beginthreadex with CREATE_SUSPENDED (0x04)...');

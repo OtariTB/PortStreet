@@ -29,14 +29,31 @@ extern "C" {
  * -------------------------------------------------------------------------- */
 #define GUEST_PAGE_SIZE          0x1000u       /* 4 KiB */
 #define GUEST_NULL_GUARD_LIMIT   0x00100000u   /* 0..1 MB guarded against nullptr */
-#define GUEST_TEB_ADDR           0x00100000u   /* Thread Environment Block */
-#define GUEST_CPU_STRUCT_ADDR    0x00104000u   /* Diagnostic / host guest CPU register structure */
-#define GUEST_WORKER_CPU_ADDR    0x00105000u   /* Worker guest CPU register structure */
-#define GUEST_WORKER_TEB_ADDR    0x00108000u   /* Worker Thread Environment Block */
-#define GUEST_WORKER_STACK_BOTTOM 0x001e0000u  /* Worker Stack Limit (64 KB) */
-#define GUEST_WORKER_STACK_TOP   0x001efff0u   /* Worker Stack Initial ESP */
-#define GUEST_STACK_BOTTOM       0x00200000u   /* Stack base (2 MB) */
-#define GUEST_STACK_TOP          0x003FF000u   /* Initial ESP (stack grows down) */
+#define GUEST_TEB_ADDR           0x00100000u   /* Main Thread Environment Block */
+#define GUEST_MAIN_TLS_COPY_ADDR 0x00102000u   /* Main Thread 4 KiB .tls copy */
+#define GUEST_CPU_STRUCT_ADDR    0x00104000u   /* Main host guest CPU register structure */
+
+#define GUEST_MAX_WORKERS              8u
+#define GUEST_WORKER_CPU_STRIDE        0x00000400u /* 1 KiB per CPU struct */
+#define GUEST_WORKER_TEB_STRIDE        0x00001000u /* 4 KiB per Worker TEB */
+#define GUEST_WORKER_TLS_BASE          0x00110000u /* 8 * 4 KiB Worker .tls copies */
+#define GUEST_WORKER_STACK_REGION_BASE 0x00140000u /* 8 * 96 KiB Worker x86 stacks (..0x00200000) */
+#define GUEST_WORKER_STACK_STRIDE      0x00018000u /* 96 KiB per Worker x86 stack */
+
+#define GUEST_WORKER_CPU_ADDR_N(i)          (0x00105000u + (uint32_t)(i) * GUEST_WORKER_CPU_STRIDE)
+#define GUEST_WORKER_MAILBOX_VA             0x00107000u /* Shared atomic mailbox for 8 guest workers (4 KiB) */
+#define GUEST_WORKER_TEB_ADDR_N(i)          (0x00108000u + (uint32_t)(i) * GUEST_WORKER_TEB_STRIDE)
+#define GUEST_WORKER_TLS_ADDR_N(i)          (GUEST_WORKER_TLS_BASE + (uint32_t)(i) * 0x1000u)
+#define GUEST_WORKER_STACK_BOTTOM_N(i)      (GUEST_WORKER_STACK_REGION_BASE + (uint32_t)(i) * GUEST_WORKER_STACK_STRIDE)
+#define GUEST_WORKER_STACK_TOP_N(i)         (GUEST_WORKER_STACK_BOTTOM_N(i) + GUEST_WORKER_STACK_STRIDE - 0x10u)
+
+#define GUEST_WORKER_CPU_ADDR    GUEST_WORKER_CPU_ADDR_N(0)
+#define GUEST_WORKER_TEB_ADDR    GUEST_WORKER_TEB_ADDR_N(0)
+#define GUEST_WORKER_STACK_BOTTOM GUEST_WORKER_STACK_BOTTOM_N(0)
+#define GUEST_WORKER_STACK_TOP   GUEST_WORKER_STACK_TOP_N(0)
+
+#define GUEST_STACK_BOTTOM       0x00200000u   /* Main Stack base (2 MB) */
+#define GUEST_STACK_TOP          0x003FF000u   /* Main Initial ESP (stack grows down) */
 #define GUEST_IMAGE_BASE         0x00400000u   /* PE Image Base */
 
 #define GUEST_TEXT_START         0x00401000u
@@ -204,8 +221,9 @@ uint32_t guest_heap_alloc(uint32_t size, uint32_t alignment);
 void guest_cpu_init(struct CPU *c, uint32_t entry_point);
 
 /**
- * Initializes the worker thread environment block (TEB) and thread state.
+ * Initializes the worker thread environment block (TEB) and per-slot TLS state.
  */
+void guest_init_worker_teb_slot(struct CPU *c, uint32_t slot_idx);
 void guest_init_worker_teb(struct CPU *c);
 
 #ifdef __cplusplus

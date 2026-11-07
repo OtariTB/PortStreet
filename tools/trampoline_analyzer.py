@@ -153,47 +153,52 @@ def resolve_plain_stub(
     stub_va: int,
     cs: Cs,
 ) -> tuple[str, int, list[dict[str, Any]]]:
-    """Resolve a plain x86 stub statically without emulation."""
+    """Resolve a plain x86 stub statically without emulation.
+
+    Only genuine 1-instruction jump thunks (`jmp <imm>` at insns[0]) or
+    2-instruction push-ret thunks (`push <imm>; ret` at insns[0..1]) redirect;
+    all multi-instruction prologues are full .securom functions starting at stub_va.
+    """
     stub_off = va_to_offset(stub_va)
-    code = raw_exe[stub_off : stub_off + 1024]
+    code = raw_exe[stub_off : stub_off + 128]
     insns = list(cs.disasm(code, stub_va))
 
-    # Look for jmp <imm>
-    for j, ins in enumerate(insns):
-        if ins.mnemonic == "jmp" and ins.op_str.startswith("0x"):
+    if insns:
+        i0 = insns[0]
+        if i0.mnemonic == "jmp" and i0.op_str.startswith("0x"):
             try:
-                dest = int(ins.op_str, 16)
-                asm = [
-                    {"address": i.address, "mnemonic": i.mnemonic, "op_str": i.op_str, "size": i.size}
-                    for i in insns[: j + 1]
-                ]
+                dest = int(i0.op_str, 16)
+                asm = [{"address": i0.address, "mnemonic": i0.mnemonic, "op_str": i0.op_str, "size": i0.size}]
                 return "plain_jump", dest, asm
             except ValueError:
                 pass
 
-        if ins.mnemonic in ("ret", "retf"):
-            # Check if immediately preceded by push <imm>
-            if j > 0 and insns[j - 1].mnemonic == "push" and insns[j - 1].op_str.startswith("0x"):
-                try:
-                    dest = int(insns[j - 1].op_str, 16)
-                    asm = [
-                        {"address": i.address, "mnemonic": i.mnemonic, "op_str": i.op_str, "size": i.size}
-                        for i in insns[: j + 1]
-                    ]
-                    return "plain_push_ret", dest, asm
-                except ValueError:
-                    pass
-            # Otherwise self-contained function
-            asm = [
-                {"address": i.address, "mnemonic": i.mnemonic, "op_str": i.op_str, "size": i.size}
-                for i in insns[: j + 1]
-            ]
-            return "plain_function", stub_va, asm
+        if (
+            len(insns) >= 2
+            and i0.mnemonic == "push"
+            and i0.op_str.startswith("0x")
+            and insns[1].mnemonic in ("ret", "retf")
+            and not insns[1].op_str
+        ):
+            try:
+                dest = int(i0.op_str, 16)
+                asm = [
+                    {"address": i.address, "mnemonic": i.mnemonic, "op_str": i.op_str, "size": i.size}
+                    for i in insns[:2]
+                ]
+                return "plain_push_ret", dest, asm
+            except ValueError:
+                pass
 
-    # Default fallback: self-contained function
+    # Full function body living at stub_va
+    end_idx = min(len(insns), 8)
+    for j, ins in enumerate(insns[:8]):
+        if ins.mnemonic in ("ret", "retf"):
+            end_idx = j + 1
+            break
     asm = [
         {"address": i.address, "mnemonic": i.mnemonic, "op_str": i.op_str, "size": i.size}
-        for i in insns[:8]
+        for i in insns[:end_idx]
     ]
     return "plain_function", stub_va, asm
 
@@ -332,13 +337,163 @@ def analyze_all_trampolines(
     return results
 
 
+def analyze_securom_bridges(
+    raw_exe: bytes,
+    primary_trampolines: Sequence[TrampolineSite],
+    cs: Cs | None = None,
+    mu: Uc | None = None,
+    mu_state: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Resolve secondary bridges living inside .securom and VM stub aliases:
+    1. Unique stub_va -> target_va aliases for VM stubs referenced by .text.
+    2. All .securom 'ff 25 [ptr_va]' indirect jump thunks targeting .text/.securom.
+    3. Extra 16-byte-aligned VM entry stubs inside .securom not directly referenced by .text 'ff 25'.
+    """
+    if cs is None:
+        cs = Cs(CS_ARCH_X86, CS_MODE_32)
+    if mu is None or mu_state is None:
+        mu, mu_state = create_unicorn_emulator(raw_exe)
+
+    sections = parse_pe_sections(raw_exe)
+    securom_info = next((s for s in sections if s[0] == ".securom"), None)
+    text_info = next((s for s in sections if s[0] == ".text"), None)
+    if not securom_info or not text_info:
+        return []
+
+    _, text_va, text_vsize, _, _ = text_info
+    _, sec_va, sec_vsize, sec_off, sec_rsize = securom_info
+
+    def is_exec_va(va: int) -> bool:
+        return (text_va <= va < text_va + text_vsize) or (sec_va <= va < sec_va + sec_vsize)
+
+    bridges: list[dict[str, Any]] = []
+    seen_sites: set[int] = {t.site_va for t in primary_trampolines}
+    known_vm_stubs: set[int] = set()
+
+    # 1. VM stub_va -> target_va aliases
+    for t in primary_trampolines:
+        if t.stub_va != t.target_va and t.stub_va not in seen_sites:
+            seen_sites.add(t.stub_va)
+            known_vm_stubs.add(t.stub_va)
+            bridges.append({
+                "bridge_kind": "vm_stub",
+                "site_va": t.stub_va,
+                "ptr_va": 0,
+                "stub_va": t.stub_va,
+                "stub_type": t.stub_type,
+                "target_va": t.target_va,
+                "target_section": t.target_section,
+            })
+        elif t.stub_va == t.target_va:
+            known_vm_stubs.add(t.stub_va)
+
+    initial_esp = 0x001F0000
+    dummy_ret = struct.pack("<I", 0x00401000)
+
+    # 2. .securom 'ff 25 [ptr_va]' indirect jump sites
+    sec_bytes = raw_exe[sec_off : sec_off + sec_rsize]
+    offset = 0
+    limit = len(sec_bytes) - 6
+    while offset <= limit:
+        idx = sec_bytes.find(b"\xff\x25", offset)
+        if idx == -1 or idx > limit:
+            break
+        ptr_va = struct.unpack_from("<I", sec_bytes, idx + 2)[0]
+        if 0x01000000 <= ptr_va <= 0x01FFFFFF and (ptr_va & 3) == 0:
+            ptr_off = va_to_offset(ptr_va)
+            if 0 <= ptr_off and ptr_off + 4 <= len(raw_exe):
+                stub_va = struct.unpack_from("<I", raw_exe, ptr_off)[0]
+                site_va = sec_va + idx
+                if is_exec_va(stub_va) and site_va not in seen_sites:
+                    stub_off = va_to_offset(stub_va)
+                    stub_bytes = raw_exe[stub_off : stub_off + 32]
+                    cat = classify_stub_initial(stub_bytes, stub_va, cs)
+                    if cat in ("vitality_call", "vitality_obf_push"):
+                        mu_state["dest"] = None
+                        mu.reg_write(UC_X86_REG_ESP, initial_esp)
+                        mu.mem_write(initial_esp, dummy_ret)
+                        try:
+                            mu.emu_start(site_va, 0x00900000, timeout=5000000)
+                            dest = mu_state["dest"]
+                        except Exception:
+                            dest = None
+                        if dest is not None and is_exec_va(dest):
+                            seen_sites.add(site_va)
+                            known_vm_stubs.add(stub_va)
+                            bridges.append({
+                                "bridge_kind": "securom_ff25",
+                                "site_va": site_va,
+                                "ptr_va": ptr_va,
+                                "stub_va": stub_va,
+                                "stub_type": cat,
+                                "target_va": dest,
+                                "target_section": get_section_for_va(dest, sections),
+                            })
+                    else:
+                        sub_type, dest, _ = resolve_plain_stub(raw_exe, stub_va, cs)
+                        if is_exec_va(dest):
+                            seen_sites.add(site_va)
+                            bridges.append({
+                                "bridge_kind": "securom_ff25",
+                                "site_va": site_va,
+                                "ptr_va": ptr_va,
+                                "stub_va": stub_va,
+                                "stub_type": sub_type,
+                                "target_va": dest,
+                                "target_section": get_section_for_va(dest, sections),
+                            })
+        offset = idx + 1
+
+    # 3. Extra 16-byte-aligned VM entry stubs inside .securom (e.g. targets of direct e9 jumps)
+    for off in range(0, len(sec_bytes) - 32, 16):
+        va = sec_va + off
+        if va in seen_sites or va in known_vm_stubs:
+            continue
+        cat = classify_stub_initial(sec_bytes[off : off + 32], va, cs)
+        is_vm_sig = (
+            0x019F0000 <= va < 0x01AB0000
+            and sec_bytes[off] == 0x68
+            and sec_bytes[off + 4] == 0x01
+            and (
+                sec_bytes[off + 5] == 0xE8
+                or (sec_bytes[off + 5] == 0x68 and sec_bytes[off + 10] == 0x68)
+            )
+        )
+        if cat in ("vitality_call", "vitality_obf_push") or is_vm_sig:
+            mu_state["dest"] = None
+            mu.reg_write(UC_X86_REG_ESP, initial_esp)
+            mu.mem_write(initial_esp, dummy_ret)
+            try:
+                mu.emu_start(va, 0x00900000, timeout=5000000)
+                dest = mu_state["dest"]
+            except Exception:
+                dest = None
+            if dest is not None and is_exec_va(dest):
+                seen_sites.add(va)
+                known_vm_stubs.add(va)
+                bridges.append({
+                    "bridge_kind": "extra_vm_stub",
+                    "site_va": va,
+                    "ptr_va": 0,
+                    "stub_va": va,
+                    "stub_type": cat if cat != "plain_x86" else "vitality_call",
+                    "target_va": dest,
+                    "target_section": get_section_for_va(dest, sections),
+                })
+
+    return bridges
+
+
 def generate_trampoline_report(
     raw_exe: bytes,
     output_path: Path | None = None,
 ) -> dict[str, Any]:
     """Generate and write the full trampoline catalog and statistical summary."""
     t0 = time.time()
-    results = analyze_all_trampolines(raw_exe)
+    cs = Cs(CS_ARCH_X86, CS_MODE_32)
+    mu, mu_state = create_unicorn_emulator(raw_exe)
+    results = analyze_all_trampolines(raw_exe, cs=cs, mu=mu, mu_state=mu_state)
+    securom_bridges = analyze_securom_bridges(raw_exe, results, cs=cs, mu=mu, mu_state=mu_state)
     elapsed = time.time() - t0
 
     type_counts: dict[str, int] = {}
@@ -347,8 +502,15 @@ def generate_trampoline_report(
         type_counts[r.stub_type] = type_counts.get(r.stub_type, 0) + 1
         sec_counts[r.target_section] = sec_counts.get(r.target_section, 0) + 1
 
+    bridge_kind_counts: dict[str, int] = {}
+    for b in securom_bridges:
+        bk = b["bridge_kind"]
+        bridge_kind_counts[bk] = bridge_kind_counts.get(bk, 0) + 1
+
     summary = {
         "total_trampolines": len(results),
+        "securom_bridges_count": len(securom_bridges),
+        "securom_bridge_kinds": bridge_kind_counts,
         "analysis_time_seconds": round(elapsed, 3),
         "types": type_counts,
         "target_sections": sec_counts,
@@ -360,6 +522,7 @@ def generate_trampoline_report(
         data = {
             "summary": summary,
             "trampolines": [asdict(r) for r in results],
+            "securom_bridges": securom_bridges,
         }
         output_path.write_text(json.dumps(data, indent=2))
 

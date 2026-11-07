@@ -66,17 +66,25 @@ async function run() {
         process.exit(1);
     }
 
-    let worker = null;
+    const workers = [];
     let instance = null;
+    let fatalFailure = false;
+    const gameDir = path.dirname(NFS_EXE_PATH);
 
     try {
         const wasi = new WASI({
             version: 'preview1',
             args: ['nfs.exe'],
-            env: process.env,
+            env: {
+                ...process.env,
+                PROSTREET_GAME_DIR: '/game',
+            },
+            preopens: {
+                '/game': gameDir,
+            },
         });
 
-        // 1. Allocate 704 MB Shared Linear Memory
+        // 1. Allocate 704 MB Shared Linear Memory (0x2c000000 bytes: 640 MB guest + 64 MB host/WASM stacks)
         const sharedMemory = new WebAssembly.Memory({
             shared: true,
             initial: 11264,
@@ -86,12 +94,20 @@ async function run() {
         const wasmBytes = fs.readFileSync(WASM_PATH);
         const module = new WebAssembly.Module(wasmBytes);
         instance = new WebAssembly.Instance(module, {
-            wasi_snapshot_preview1: wasi.wasiImport,
+            wasi_snapshot_preview1: {
+                ...wasi.wasiImport,
+                // Wrap instance exports so WASI preopens can locate sharedMemory
+            },
             env: { memory: sharedMemory },
         });
 
         if (wasi.initialize) {
-            wasi.initialize(instance);
+            wasi.initialize({
+                exports: {
+                    ...instance.exports,
+                    memory: sharedMemory,
+                },
+            });
         }
 
         console.log('[1/5] Calling fntab_init() to populate master dispatch table...');
@@ -117,9 +133,10 @@ async function run() {
         wasmMem[0x00400000] = 0x4d; // 'M'
         wasmMem[0x00400001] = 0x5a; // 'Z'
 
-        console.log('[3/5] Setting up TEB (0x00100000) and Guest Stack (0x003FF000)...');
-        // TEB and TLS layout (consistent with runtime/memory.c & tools/guest_boot.py)
+        console.log('[3/5] Setting up TEB (0x00100000), private .tls copy (0x00102000), and Guest Stack (0x003FF000)...');
         const dv = new DataView(sharedMemory.buffer);
+        // Copy authentic .tls template (0x01010000..0x01011000) to Main TLS block (0x00102000)
+        wasmMem.set(wasmMem.subarray(0x01010000, 0x01011000), 0x00102000);
         dv.setUint32(0x00100000, 0xFFFFFFFF, true); // SEH frame head
         dv.setUint32(0x00100004, 0x00400000, true); // StackBase
         dv.setUint32(0x00100008, 0x00200000, true); // StackLimit
@@ -128,50 +145,71 @@ async function run() {
         dv.setUint32(0x00100024, 0x00001001, true); // Simulated TID
         dv.setUint32(0x0010002c, 0x00100100, true); // ThreadLocalStoragePointer (fs:[0x2c])
         dv.setUint32(0x00100030, 0x00101000, true); // Simulated PEB
-        dv.setUint32(0x00100100, 0x00100200, true); // TLS module 0 array pointer
+        dv.setUint32(0x00100100, 0x00102000, true); // TLS module 0 array pointer -> authentic .tls copy
 
         console.log('[4/5] Binding IAT shims and installing runtime hooks...');
         instance.exports.boot_bind_iats();
         instance.exports.boot_install_hooks();
 
-        // Allocate guest CPU structure in reserved TEB/TLS page (0x00104000)
-        // Non-overlapping with guest dynamic heap (0x02000000..0x28000000)
         const CPU_STRUCT_VA = 0x00104000;
-        const WORKER_CPU_VA = 0x00105000;
-        // Zero out CPU structs
-        for (let i = 0; i < 512; i++) {
-            wasmMem[CPU_STRUCT_VA + i] = 0;
-            wasmMem[WORKER_CPU_VA + i] = 0;
+        const WORKER_POOL_SIZE = 4;
+        wasmMem.fill(0, CPU_STRUCT_VA, CPU_STRUCT_VA + 0x400);
+        for (let s = 0; s < 8; s++) {
+            const wcpu = 0x00105000 + s * 0x0400;
+            wasmMem.fill(0, wcpu, wcpu + 0x0400);
         }
+
         // Set Main CPU fields:
-        // esp (offset 16) = 0x003ff000
-        dv.setUint32(CPU_STRUCT_VA + 16, 0x003ff000, true);
-        // eip (offset 32) = 0x004afee0 (GUEST_MAIN_ENTRY_VA)
-        dv.setUint32(CPU_STRUCT_VA + 32, 0x004afee0, true);
-        // fs_base (offset 36) = 0x00100000
-        dv.setUint32(CPU_STRUCT_VA + 36, 0x00100000, true);
+        dv.setUint32(CPU_STRUCT_VA + 16, 0x003ff000, true); // esp
+        dv.setUint32(CPU_STRUCT_VA + 32, 0x004afee0, true); // eip
+        dv.setUint32(CPU_STRUCT_VA + 36, 0x00100000, true); // fs_base
+        dv.setUint16(CPU_STRUCT_VA + 148, 0x037f, true);    // fcw
 
-        console.log('[4b/5] Launching background guest worker thread with shared memory...');
-        worker = new Worker(path.resolve(__dirname, 'worker_game_thread.mjs'), {
-            workerData: {
-                wasmPath: WASM_PATH,
-                sharedMemory,
-                workerCpuVa: WORKER_CPU_VA,
-            }
-        });
+        console.log(`[4b/5] Launching ${WORKER_POOL_SIZE} isolated guest worker threads with shared memory...`);
+        const GUEST_WORKER_MAILBOX_VA = 0x00107000;
+        const mbI32 = new Int32Array(sharedMemory.buffer, GUEST_WORKER_MAILBOX_VA, 64);
+        mbI32.fill(0);
 
-        await new Promise((resolve, reject) => {
-            worker.on('message', (msg) => {
-                if (msg.type === 'READY') resolve();
-                if (msg.type === 'ERROR') {
-                    console.error('[Worker Error]:', msg.error, msg.stack);
+        for (let slot = 0; slot < WORKER_POOL_SIZE; slot++) {
+            const wCpuVa = 0x00105000 + slot * 0x0400;
+            const w = new Worker(path.resolve(__dirname, 'worker_game_thread.mjs'), {
+                workerData: {
+                    wasmPath: WASM_PATH,
+                    sharedMemory,
+                    workerSlot: slot,
+                    workerCpuVa: wCpuVa,
+                    gameDir,
                 }
             });
-            worker.on('error', reject);
-        });
+            w.on('error', (err) => {
+                fatalFailure = true;
+                console.error(`[Worker #${slot} Error]:`, err);
+            });
+            workers.push(w);
+            await new Promise((resolve, reject) => {
+                w.on('message', (msg) => {
+                    if (msg.type === 'READY') resolve();
+                    if (msg.type === 'ERROR') {
+                        fatalFailure = true;
+                        console.error(`[Worker #${msg.slot} Error]: ${msg.error}\n${msg.stack}`);
+                    }
+                });
+                w.on('error', reject);
+            });
+        }
 
-        worker.postMessage({ type: 'RUN_LOOP' });
-        console.log('      Background worker running in guest_worker_thread_run loop.');
+        // Wait for all workers to confirm READY state (1) in the shared atomic control mailbox
+        for (let slot = 0; slot < WORKER_POOL_SIZE; slot++) {
+            const stateIdx = slot * 8; // 32 bytes per slot / 4 bytes per i32
+            const t0 = Date.now();
+            while (Atomics.load(mbI32, stateIdx) !== 1) {
+                if (Date.now() - t0 > 5000) {
+                    throw new Error(`Worker #${slot} failed to reach READY state in mailbox within 5s`);
+                }
+                Atomics.wait(mbI32, stateIdx, 0, 50);
+            }
+        }
+        console.log(`      ${WORKER_POOL_SIZE} background workers confirmed READY in shared mailbox.`);
 
     console.log('[5/5] Executing genuine C++ static initializers in WebAssembly...');
     const t_init = Date.now();
@@ -188,11 +226,8 @@ async function run() {
                 const esp_next = saved_esp - 4;
                 dv.setUint32(CPU_STRUCT_VA + 16, esp_next, true);
                 dv.setUint32(esp_next, 0x00828ae0, true);
-                if (count % 50 === 0 && count < 169) {
-                    fs.writeSync(1, `      ... reached Constructor #${count} (0x${fn_va.toString(16)})\n`);
-                }
-                if (count >= 169) {
-                    fs.writeSync(1, `      -> [START] Constructor #${count} (0x${fn_va.toString(16)})...\n`);
+                if (count % 150 === 0 || count === 169) {
+                    fs.writeSync(1, `      ... Constructor #${count} (0x${fn_va.toString(16)})\n`);
                 }
                 const t_ctor_start = Date.now();
                 instance.exports.dispatch_indirect(CPU_STRUCT_VA, fn_va);
@@ -204,20 +239,18 @@ async function run() {
                     const low_10c = dv.getUint8(0x10c);
                     const low_110 = dv.getUint32(0x110, true);
                     if (obj_count === 87 && arr_ptr >= 0x02000000 && arr_ptr < 0x28000000 && ctor_count === 87 && low_10c === 0 && low_110 === 0) {
-                        fs.writeSync(1, `      [PASS] Constructor #169 completed! Descriptor count=[0xab47e4]=${obj_count}, Element array=[0xab494c]=0x${arr_ptr.toString(16)} (header count=${ctor_count}, size=${obj_count * 12 + 4} bytes), null-guard clean [${t_ctor_elapsed}ms]\n`);
+                        fs.writeSync(1, `      [PASS] Constructor #169 completed! Descriptor count=[0xab47e4]=${obj_count}, Element array=[0xab494c]=0x${arr_ptr.toString(16)} [${t_ctor_elapsed}ms]\n`);
                     } else {
                         fs.writeSync(1, `      [FAIL] Constructor #169 invalid state! count=${obj_count}, arr=0x${arr_ptr.toString(16)}, header=${ctor_count}, low_10c=${low_10c}, low_110=0x${low_110.toString(16)}\n`);
+                        fatalFailure = true;
                         process.exit(1);
                     }
-                } else if (count > 169) {
-                    fs.writeSync(1, `      <- [DONE]  Constructor #${count} (0x${fn_va.toString(16)}) [${t_ctor_elapsed}ms]\n`);
                 }
                 dv.setUint32(CPU_STRUCT_VA + 16, saved_esp, true);
             }
         }
         console.log("      Constructors executed: " + count + " / 960 in " + (Date.now() - t_init) + "ms");
 
-        // Inspect 9,000-element array initialized by sub_004b2f80 (Constructor #922 / 0x00c04c3c)
         const arr9k = 0x00c04c3c;
         const elem0_10 = dv.getUint32(arr9k + 0x10, true);
         const elem0_50 = dv.getUint32(arr9k + 0x50, true);
@@ -236,27 +269,14 @@ async function run() {
             console.log(`      Unresolved dispatches during static initializers: ${ctorUnres} (unique: ${ctorUnresU})`);
         }
     } catch (err) {
-        console.error(`[FAIL] Constructor #${current_ctor} (0x${current_fn.toString(16)}) trapped:`, err);
-        dumpCPU(dv, CPU_STRUCT_VA);
-        console.log('\n--- bChunk Pool Object State (0x00abb060) ---');
-        const bchunk = 0x00abb060;
-        console.log(`init_flag (+0x10c): ${dv.getUint8(bchunk + 0x10c)}`);
-        console.log(`field_+0x100:      0x${dv.getUint32(bchunk + 0x100, true).toString(16)}`);
-        console.log(`field_+0x104:      0x${dv.getUint32(bchunk + 0x104, true).toString(16)}`);
-        console.log(`field_+0x108:      0x${dv.getUint32(bchunk + 0x108, true).toString(16)}`);
-        console.log(`fastmem_ptr (+0x110): 0x${dv.getUint32(bchunk + 0x110, true).toString(16)}`);
-        console.log(`fastmem_sz (+0x114):  0x${dv.getUint32(bchunk + 0x114, true).toString(16)}`);
-        console.log(`fastmem_off (+0x118): 0x${dv.getUint32(bchunk + 0x118, true).toString(16)}`);
-        console.log('First 8 buckets:');
-        for (let b = 0; b < 8; b++) {
-            console.log(`  bucket[${b}]: 0x${dv.getUint32(bchunk + b * 4, true).toString(16)}`);
-        }
+        fatalFailure = true;
+        console.error(`[FAIL] Constructor #${current_ctor} (0x${current_fn.toString(16)}) trapped:`, err.stack || err);
+        dumpCPU(dv, CPU_STRUCT_VA, 'Main CPU');
         process.exit(1);
     }
 
     console.log('[6/5] Setting up main() arguments and entering genuine ProStreet main()...');
     instance.exports.boot_setup_arguments(CPU_STRUCT_VA, 1, 0);
-    // Reset guest EIP to genuine main() entry to eliminate stale constructor addresses
     dv.setUint32(CPU_STRUCT_VA + 32, 0x004afee0, true);
 
     const t_main = Date.now();
@@ -265,9 +285,13 @@ async function run() {
         const rc = instance.exports.boot_invoke_main(CPU_STRUCT_VA, false);
         console.log(`      boot_invoke_main returned: ${rc} in ${Date.now() - t_main}ms`);
     } catch (err) {
+        fatalFailure = true;
         console.log('\n================ FIRST WASM RUNTIME FAILURE ================');
         console.log('Trap / Error:', err.message);
-        dumpCPU(dv, CPU_STRUCT_VA);
+        if (err.stack) {
+            console.log('WASM Stack Trace:\n' + err.stack);
+        }
+        dumpCPU(dv, CPU_STRUCT_VA, 'Main CPU');
         console.log('============================================================');
     }
 
@@ -296,7 +320,6 @@ async function run() {
     const ringVer = dv.getUint32(D3D9_RING_BUFFER_VA + 4, true);
     const ringHead = dv.getUint32(D3D9_RING_BUFFER_VA + 8, true);
     const ringTail = dv.getUint32(D3D9_RING_BUFFER_VA + 12, true);
-    const ringCap = dv.getUint32(D3D9_RING_BUFFER_VA + 16, true);
     const frameIndex = dv.getUint32(D3D9_RING_BUFFER_VA + 20, true);
 
     console.log('\n=== DIRECT3D 9 SHARED MEMORY RING BUFFER STATE ===');
@@ -341,35 +364,30 @@ async function run() {
         console.log('No commands written to ring buffer (head = 0).');
     }
 
-    // Inspect Constructor #169 object state
-    const ctor169Obj = 0x00ab47e0;
-    const c169Count = dv.getUint32(ctor169Obj + 4, true);
-    const c169Arr = dv.getUint32(ctor169Obj + 0x16c, true);
-    console.log('\n=== CONSTRUCTOR #169 STATE ===');
-    console.log(`Object 0x${ctor169Obj.toString(16)}: descriptor count=${c169Count}, element_array=0x${c169Arr.toString(16)}`);
-    if (c169Arr >= 0x02000000 && c169Arr < 0x28000000) {
-        const allocHeader = dv.getUint32(c169Arr - 4, true);
-        console.log(`Element array resides in dynamic heap! Heap alloc header count=${allocHeader}`);
-    } else {
-        console.log(`WARNING: Element array pointer 0x${c169Arr.toString(16)} is not in heap range!`);
-    }
-
     console.log('\n=== GUEST THREAD & CONCURRENCY STATE ===');
-    const wesp = dv.getUint32(WORKER_CPU_VA + 16, true);
-    const weip = dv.getUint32(WORKER_CPU_VA + 32, true);
-    const weax = dv.getUint32(WORKER_CPU_VA + 0, true);
-    console.log(`Worker CPU: ESP=0x${wesp.toString(16).padStart(8, '0')} EIP=0x${weip.toString(16).padStart(8, '0')} EAX=0x${weax.toString(16).padStart(8, '0')}`);
+    const threadCount = instance.exports.win32_get_guest_thread_count
+        ? instance.exports.win32_get_guest_thread_count()
+        : 1;
+    console.log(`Total guest threads created: ${threadCount}`);
+    for (let s = 0; s < Math.min(8, Math.max(threadCount, WORKER_POOL_SIZE)); s++) {
+        const wCpuVa = 0x00105000 + s * 0x0400;
+        dumpCPU(dv, wCpuVa, `Worker Slot #${s} CPU`);
+    }
     } finally {
         if (instance && instance.exports.guest_worker_thread_stop) {
             try { instance.exports.guest_worker_thread_stop(); } catch (e) {}
         }
-        if (worker) {
-            try { await worker.terminate(); } catch (e) {}
+        for (const w of workers) {
+            try { await w.terminate(); } catch (e) {}
         }
+    }
+
+    if (fatalFailure) {
+        process.exit(1);
     }
 }
 
-function dumpCPU(dv, cpu_va) {
+function dumpCPU(dv, cpu_va, label = 'CPU') {
     const eax = dv.getUint32(cpu_va + 0, true);
     const ecx = dv.getUint32(cpu_va + 4, true);
     const edx = dv.getUint32(cpu_va + 8, true);
@@ -380,12 +398,27 @@ function dumpCPU(dv, cpu_va) {
     const edi = dv.getUint32(cpu_va + 28, true);
     const eip = dv.getUint32(cpu_va + 32, true);
     const fs  = dv.getUint32(cpu_va + 36, true);
+    const traceIdx = dv.getUint32(cpu_va + 352, true);
 
+    console.log(`--- ${label} (0x${cpu_va.toString(16)}) ---`);
     console.log(`EAX: 0x${eax.toString(16).padStart(8, '0')}  ECX: 0x${ecx.toString(16).padStart(8, '0')}  EDX: 0x${edx.toString(16).padStart(8, '0')}  EBX: 0x${ebx.toString(16).padStart(8, '0')}`);
     console.log(`ESP: 0x${esp.toString(16).padStart(8, '0')}  EBP: 0x${ebp.toString(16).padStart(8, '0')}  ESI: 0x${esi.toString(16).padStart(8, '0')}  EDI: 0x${edi.toString(16).padStart(8, '0')}`);
-    console.log(`EIP: 0x${eip.toString(16).padStart(8, '0')}  FS:  0x${fs.toString(16).padStart(8, '0')}`);
+    console.log(`EIP: 0x${eip.toString(16).padStart(8, '0')}  FS:  0x${fs.toString(16).padStart(8, '0')}  Dispatches: ${traceIdx}`);
 
-    if (esp >= 0x00200000 && esp < 0x00400000) {
+    if (traceIdx > 0) {
+        const count = Math.min(16, traceIdx);
+        const start = traceIdx - count;
+        const entries = [];
+        for (let i = start; i < traceIdx; i++) {
+            const slot = i & 15;
+            const tva = dv.getUint32(cpu_va + 356 + slot * 4, true);
+            const tesp = dv.getUint32(cpu_va + 420 + slot * 4, true);
+            entries.push(`0x${tva.toString(16).padStart(8, '0')}(esp=0x${tesp.toString(16)})`);
+        }
+        console.log(`Recent Dispatches (${count}): ${entries.join(' -> ')}`);
+    }
+
+    if (esp >= 0x00140000 && esp + 32 <= 0x00400000) {
         console.log('Stack Top:');
         for (let o = 0; o < 32; o += 4) {
             const val = dv.getUint32(esp + o, true);
@@ -396,4 +429,5 @@ function dumpCPU(dv, cpu_va) {
 
 run().catch(err => {
     console.error('[UNHANDLED]', err);
+    process.exit(1);
 });

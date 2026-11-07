@@ -34,7 +34,9 @@ from tools.clean_drm import (
     apply_countdown_nops,
     find_countdown_stubs,
     parse_text_section,
+    patch_all_countdown_stubs,
 )
+from tools.manual_overrides import ADDITIONAL_FUNCTIONS
 from tools.trampoline_analyzer import parse_pe_sections, va_to_offset
 
 
@@ -116,7 +118,13 @@ class CatalogBuilder:
         self.text_size = len(text_bytes)
         self.text_end = text_va + self.text_size
 
-        stubs = find_countdown_stubs(text_va, roff, text_bytes)
+        # Capstone disassembler
+        self.cs = Cs(CS_ARCH_X86, CS_MODE_32)
+        self.cs.detail = True
+
+        # Clean countdown stubs across both .text and .securom
+        self.cleaned_exe = patch_all_countdown_stubs(raw_exe, cs=self.cs)
+        stubs = find_countdown_stubs(text_va, roff, text_bytes, cs=self.cs)
         self.cleaned_text = bytes(apply_countdown_nops(text_bytes, stubs))
 
         # Find .securom section bounds
@@ -132,26 +140,44 @@ class CatalogBuilder:
         self.code_start = self.text_va
         self.code_end = max(self.text_end, self.securom_end)
 
-        # Capstone disassembler
-        self.cs = Cs(CS_ARCH_X86, CS_MODE_32)
-        self.cs.detail = True
-
-        # Trampoline maps: site_va -> target_va
+        # Trampoline maps: site_va / stub_va -> target_va (with multi-hop resolution)
         self.trampolines = trampoline_data.get("trampolines", [])
-        self.trampoline_map = {t["site_va"]: t["target_va"] for t in self.trampolines}
+        self.securom_bridges = trampoline_data.get("securom_bridges", [])
+        raw_map: dict[int, int] = {}
+        for t in self.trampolines:
+            s_va = int(t["site_va"])
+            t_va = int(t["target_va"])
+            raw_map[s_va] = t_va
+            if "stub_va" in t and int(t["stub_va"]) != t_va:
+                raw_map.setdefault(int(t["stub_va"]), t_va)
+        for b in self.securom_bridges:
+            s_va = int(b["site_va"])
+            t_va = int(b["target_va"])
+            raw_map.setdefault(s_va, t_va)
+            if "stub_va" in b and int(b["stub_va"]) != t_va:
+                raw_map.setdefault(int(b["stub_va"]), t_va)
+
+        self.trampoline_map: dict[int, int] = {}
+        for s_va in raw_map:
+            visited_chain = set()
+            cur = s_va
+            while cur in raw_map and cur not in visited_chain:
+                visited_chain.add(cur)
+                cur = raw_map[cur]
+            self.trampoline_map[s_va] = cur
 
     def in_code(self, va: int) -> bool:
         """Check if VA is in valid executable code sections (.text or .securom)."""
         return (self.text_va <= va < self.text_end) or (self.securom_va <= va < self.securom_end)
 
     def read_code_bytes(self, va: int, count: int = 15) -> bytes:
-        """Read instruction bytes from cleaned .text or raw .securom."""
+        """Read instruction bytes from cleaned .text or cleaned .securom."""
         if self.text_va <= va < self.text_end:
             off = va - self.text_va
             return self.cleaned_text[off : off + count]
         if self.securom_va <= va < self.securom_end:
             off = va - self.image_base
-            return self.raw_exe[off : off + count]
+            return self.cleaned_exe[off : off + count]
         return b""
 
     def harvest_initial_seeds(self) -> set[int]:
@@ -180,11 +206,20 @@ class CatalogBuilder:
                 if self.in_code(val):
                     seeds.add(val)
 
-        # 5. Trampoline resolved targets
+        # 5. Trampoline & SecuROM bridge resolved targets + manual overrides
         for t in self.trampolines:
-            target = t["target_va"]
+            target = int(t["target_va"])
+            target = self.trampoline_map.get(target, target)
             if self.in_code(target):
                 seeds.add(target)
+        for b in self.securom_bridges:
+            target = int(b["target_va"])
+            target = self.trampoline_map.get(target, target)
+            if self.in_code(target):
+                seeds.add(target)
+        for va in ADDITIONAL_FUNCTIONS:
+            if self.in_code(va):
+                seeds.add(va)
 
         # 6. Indirect constructor and destructor callbacks passed to iterator routines
         text_off = va_to_offset(self.text_va)
@@ -232,17 +267,33 @@ class CatalogBuilder:
         self,
         entry_va: int,
         known_functions: set[int],
-        max_insns: int = 4000,
+        max_insns: int = 12000,
     ) -> tuple[dict[str, Any] | None, set[int]]:
-        """Disassemble a function, return (function_dict, new_called_seeds)."""
+        """Disassemble a function, return (function_dict, new_discovered_seeds)."""
+        if self.read_code_bytes(entry_va, 4) == b"\x00\x00\x00\x00":
+            return None, set()
         queue = deque([entry_va])
         visited_pcs = set()
         insns_by_va = {}
         calls = set()
+        tail_seeds = set()
         jumps = set()
         leaders = {entry_va}
         switch_targets: dict[int, list[int]] = {}
+        obf_call_cont: dict[int, int] = {}
+        obf_jmp_dest: dict[int, int] = {}
+        int3_exits: set[int] = set()
         valid = True
+
+        def _push_imm(ins_obj: Any) -> int | None:
+            if (
+                ins_obj is not None
+                and ins_obj.mnemonic == "push"
+                and ins_obj.operands
+                and ins_obj.operands[0].type == X86_OP_IMM
+            ):
+                return ins_obj.operands[0].imm & 0xFFFFFFFF
+            return None
 
         while queue:
             curr = queue.popleft()
@@ -250,6 +301,8 @@ class CatalogBuilder:
                 continue
 
             pc = curr
+            prev_ins = None
+            prev2_ins = None
             while self.in_code(pc):
                 if pc in insns_by_va:
                     break
@@ -269,32 +322,88 @@ class CatalogBuilder:
                 # Call instructions
                 if m == "call":
                     if i.operands and i.operands[0].type == X86_OP_IMM:
-                        dest = i.operands[0].imm
+                        dest = i.operands[0].imm & 0xFFFFFFFF
                         dest = self.trampoline_map.get(dest, dest)
                         if self.in_code(dest):
                             calls.add(dest)
 
-                # Return instructions
+                # Return instructions (including SecuROM P2 obfuscated call & P3 push-ret jump)
                 if m in ("ret", "retf"):
+                    if m == "ret" and not i.operands and pc not in leaders:
+                        cal_imm = _push_imm(prev_ins)
+                        ret_imm = _push_imm(prev2_ins) if (prev_ins is not None and prev_ins.address not in leaders) else None
+                        if (
+                            cal_imm is not None
+                            and ret_imm is not None
+                            and self.in_code(ret_imm)
+                            and 0 <= (ret_imm - next_pc) <= 64
+                        ):
+                            # P2: push imm_ret; push imm_callee; ret (followed by 4..16 bytes junk)
+                            cal_dest = self.trampoline_map.get(cal_imm, cal_imm)
+                            if self.in_code(cal_dest):
+                                calls.add(cal_dest)
+                            obf_call_cont[pc] = ret_imm
+                            leaders.add(ret_imm)
+                            queue.append(ret_imm)
+                            break
+                        if cal_imm is not None and self.in_code(cal_imm):
+                            # P3: standalone push imm_target; ret
+                            dest = self.trampoline_map.get(cal_imm, cal_imm)
+                            jumps.add(dest)
+                            obf_jmp_dest[pc] = dest
+                            if dest not in known_functions and self.in_code(dest) and abs(dest - entry_va) < 0x8000:
+                                leaders.add(dest)
+                                queue.append(dest)
+                            elif self.in_code(dest):
+                                tail_seeds.add(dest)
+                            break
                     break
 
-                # Unconditional jumps
+                # Unconditional jumps (including SecuROM P1 obfuscated call & intra-function ff 25)
                 if m == "jmp":
-                    if i.operands and i.operands[0].type == X86_OP_IMM:
-                        dest = i.operands[0].imm
-                        dest = self.trampoline_map.get(dest, dest)
+                    ret_imm = _push_imm(prev_ins) if pc not in leaders else None
+                    if ret_imm is not None and self.in_code(ret_imm) and 0 <= (ret_imm - next_pc) <= 64:
+                        # P1: push imm_ret; jmp <callee> (followed by 4..16 bytes junk)
+                        if pc in self.trampoline_map:
+                            cal_dest = self.trampoline_map[pc]
+                            if self.in_code(cal_dest):
+                                calls.add(cal_dest)
+                        elif i.operands and i.operands[0].type == X86_OP_IMM:
+                            raw_cal = i.operands[0].imm & 0xFFFFFFFF
+                            cal_dest = self.trampoline_map.get(raw_cal, raw_cal)
+                            if self.in_code(cal_dest):
+                                calls.add(cal_dest)
+                        obf_call_cont[pc] = ret_imm
+                        leaders.add(ret_imm)
+                        queue.append(ret_imm)
+                        break
+
+                    if pc in self.trampoline_map:
+                        dest = self.trampoline_map[pc]
                         jumps.add(dest)
-                        # Treat jump to another known function as tail call; otherwise internal branch
+                        obf_jmp_dest[pc] = dest
                         if dest not in known_functions and self.in_code(dest) and abs(dest - entry_va) < 0x8000:
                             leaders.add(dest)
                             queue.append(dest)
+                        elif self.in_code(dest):
+                            tail_seeds.add(dest)
+                    elif i.operands and i.operands[0].type == X86_OP_IMM:
+                        raw_d = i.operands[0].imm & 0xFFFFFFFF
+                        dest = self.trampoline_map.get(raw_d, raw_d)
+                        jumps.add(dest)
+                        obf_jmp_dest[pc] = dest
+                        if dest not in known_functions and self.in_code(dest) and abs(dest - entry_va) < 0x8000:
+                            leaders.add(dest)
+                            queue.append(dest)
+                        elif self.in_code(dest):
+                            tail_seeds.add(dest)
                     elif i.operands and i.operands[0].type == X86_OP_MEM:
                         # Switch table: jmp dword ptr [reg*4 + table]
                         mem = i.operands[0].mem
-                        if mem.scale == 4 and mem.disp and self.in_code(mem.disp):
+                        if mem.scale == 4 and mem.disp and mem.base == 0 and mem.index != 0 and self.in_code(mem.disp):
                             tbl_va = mem.disp
                             tbl_targets = []
-                            for k in range(128):
+                            for k in range(256):
                                 t_off = va_to_offset(tbl_va) + k * 4
                                 if t_off + 4 > len(self.raw_exe):
                                     break
@@ -312,24 +421,30 @@ class CatalogBuilder:
                     break
 
                 # Conditional branches
-                if m.startswith("j") or m in ("jecxz", "jcxz", "loop", "loope", "loopne"):
+                if m.startswith("j") or m in ("jecxz", "jcxz", "loop", "loope", "loopne", "loopz", "loopnz"):
                     if i.operands and i.operands[0].type == X86_OP_IMM:
-                        dest = i.operands[0].imm
-                        dest = self.trampoline_map.get(dest, dest)
+                        raw_d = i.operands[0].imm & 0xFFFFFFFF
+                        dest = self.trampoline_map.get(raw_d, raw_d)
                         jumps.add(dest)
-                        if self.in_code(dest):
+                        if self.in_code(dest) and abs(dest - entry_va) < 0x8000 and dest not in known_functions:
                             leaders.add(dest)
                             queue.append(dest)
+                        elif self.in_code(dest):
+                            if dest in known_functions or abs(dest - entry_va) >= 0x8000:
+                                tail_seeds.add(dest)
+                            else:
+                                leaders.add(dest)
+                                queue.append(dest)
                     leaders.add(next_pc)
                     queue.append(next_pc)
                     break
 
                 # Consecutive int3 padding
                 if m == "int3":
-                    off2 = pc + i.size - self.text_va
-                    if 0 <= off2 and off2 + 3 <= len(self.cleaned_text):
-                        if self.cleaned_text[off2 : off2 + 3] == b"\xcc\xcc\xcc":
-                            break
+                    if self.read_code_bytes(next_pc, 2) == b"\xcc\xcc":
+                        if pc != entry_va:
+                            int3_exits.add(pc)
+                        break
 
                 if m in ("hlt", "ud2"):
                     break
@@ -338,17 +453,30 @@ class CatalogBuilder:
                     valid = False
                     break
 
+                prev2_ins = prev_ins
+                prev_ins = i
                 pc = next_pc
 
         if not valid or not insns_by_va or entry_va not in insns_by_va:
-            return None, calls
+            return None, calls | tail_seeds
 
-        # Ensure function has at least one valid exit or jump
-        has_exit = any(i.mnemonic in ("ret", "retf", "hlt", "ud2") for i in insns_by_va.values()) or any(
-            i.mnemonic == "jmp" for i in insns_by_va.values()
+        # Ensure function has at least one valid exit, jump, or noreturn call+int3 padding
+        has_exit = (
+            any(
+                i.mnemonic in ("ret", "retf", "hlt", "ud2") and i.address not in obf_call_cont
+                for i in insns_by_va.values()
+            )
+            or any(
+                i.mnemonic == "jmp" and i.address not in obf_call_cont
+                for i in insns_by_va.values()
+            )
+            or (
+                bool(int3_exits)
+                and any(i.mnemonic == "call" or i.address in obf_call_cont for i in insns_by_va.values())
+            )
         )
         if not has_exit:
-            return None, calls
+            return None, calls | tail_seeds
 
         # Build basic blocks
         sorted_leaders = sorted(l for l in leaders if l in insns_by_va)
@@ -365,26 +493,38 @@ class CatalogBuilder:
                 m = ins.mnemonic
                 next_pc = pc + ins.size
 
-                if ins.address in switch_targets:
-                    succs = sorted(set(switch_targets[ins.address]))
+                if ins.address in obf_call_cont:
+                    cont_va = obf_call_cont[ins.address]
+                    if cont_va in insns_by_va:
+                        succs.append(cont_va)
                     break
 
-                if m in ("ret", "retf", "hlt", "ud2"):
+                if ins.address in obf_jmp_dest:
+                    dest = obf_jmp_dest[ins.address]
+                    if dest in insns_by_va:
+                        succs.append(dest)
+                    break
+
+                if ins.address in switch_targets:
+                    succs = sorted(t for t in set(switch_targets[ins.address]) if t in insns_by_va)
+                    break
+
+                if m in ("ret", "retf", "hlt", "ud2") or ins.address in int3_exits:
                     is_exit = 1
                     break
 
                 if m == "jmp":
                     if ins.operands and ins.operands[0].type == X86_OP_IMM:
-                        dest = ins.operands[0].imm
-                        dest = self.trampoline_map.get(dest, dest)
+                        raw_d = ins.operands[0].imm & 0xFFFFFFFF
+                        dest = self.trampoline_map.get(raw_d, raw_d)
                         if dest in insns_by_va:
                             succs.append(dest)
                     break
 
-                if m.startswith("j") or m in ("jecxz", "jcxz", "loop", "loope", "loopne"):
+                if m.startswith("j") or m in ("jecxz", "jcxz", "loop", "loope", "loopne", "loopz", "loopnz"):
                     if ins.operands and ins.operands[0].type == X86_OP_IMM:
-                        dest = ins.operands[0].imm
-                        dest = self.trampoline_map.get(dest, dest)
+                        raw_d = ins.operands[0].imm & 0xFFFFFFFF
+                        dest = self.trampoline_map.get(raw_d, raw_d)
                         if dest in insns_by_va:
                             succs.append(dest)
                     if next_pc in insns_by_va:
@@ -402,7 +542,11 @@ class CatalogBuilder:
                 b_end = blk_insns[-1].address + blk_insns[-1].size
                 blocks.append([b_start, b_end, sorted(set(succs)), is_exit])
 
-        is_thunk = len(blocks) == 1 and len(insns_by_va) <= 2 and any(i.mnemonic == "jmp" for i in insns_by_va.values())
+        is_thunk = (
+            len(blocks) == 1
+            and len(insns_by_va) <= 2
+            and any(i.mnemonic == "jmp" or i.address in obf_jmp_dest for i in insns_by_va.values())
+        )
         func_dict = {
             "address": entry_va,
             "blocks": blocks,
@@ -411,7 +555,7 @@ class CatalogBuilder:
             "calls_to": sorted(calls),
             "jump_targets": sorted(jumps),
         }
-        return func_dict, calls
+        return func_dict, calls | tail_seeds
 
     def build_catalog(self) -> dict[str, Any]:
         """Harvest seeds and recursively discover all functions."""
@@ -442,6 +586,68 @@ class CatalogBuilder:
                     f"Catalog discovery progress: {len(discovered)} valid functions "
                     f"({processed} seeds processed, queue: {len(queue)}, {time.time()-t0:.2f}s)"
                 )
+
+        # Pass 2: Recover uncovered .text IAT thunks and immediate-referenced callbacks/threads
+        # (e.g. Render Thread sub_004b0100 pushed as immediate to _beginthreadex in main()).
+        if self.text_size >= 0x10000:
+            covered_pcs: set[int] = set()
+            for fn in discovered.values():
+                for bs, be, _, _ in fn["blocks"]:
+                    covered_pcs.update(range(bs, be))
+
+            text_limit = min(self.text_end, 0x00966080)
+            le_refs: set[int] = set()
+            raw_len = len(self.cleaned_exe)
+            scan_start = min(va_to_offset(self.text_va), raw_len)
+            for i in range(scan_start, max(scan_start, raw_len - 4)):
+                v = struct.unpack_from("<I", self.cleaned_exe, i)[0]
+                if self.text_va <= v < text_limit:
+                    le_refs.add(v)
+                b0 = self.cleaned_exe[i]
+                if b0 in (0xE8, 0xE9) and i + 5 <= raw_len:
+                    rel = struct.unpack_from("<i", self.cleaned_exe, i + 1)[0]
+                    t = self.image_base + i + 5 + rel
+                    if self.text_va <= t < text_limit:
+                        le_refs.add(t)
+
+            pass2_seeds: list[int] = []
+            # 2a. Uncovered .text jmp dword ptr [IAT] thunks
+            for va in range(self.text_va, text_limit - 6):
+                if va in covered_pcs or va in all_known_entries:
+                    continue
+                b6 = self.read_code_bytes(va, 6)
+                if len(b6) == 6 and b6[0] == 0xFF and b6[1] == 0x25:
+                    iat_va = struct.unpack_from("<I", b6, 2)[0]
+                    if 0x00967000 <= iat_va <= 0x00967660:
+                        all_known_entries.add(va)
+                        pass2_seeds.append(va)
+
+            # 2b. Uncovered 16-byte aligned or post-0xCC .text functions referenced in image
+            for va in sorted(le_refs):
+                if va in covered_pcs or va in all_known_entries:
+                    continue
+                b1 = self.read_code_bytes(va, 1)
+                if not b1 or b1[0] in (0x00, 0xCC, 0x90):
+                    continue
+                prev1 = self.read_code_bytes(va - 1, 1) if va > self.text_va else b"\xCC"
+                if (va & 0xF) == 0 or prev1 == b"\xCC":
+                    all_known_entries.add(va)
+                    pass2_seeds.append(va)
+
+            queue.extend(pass2_seeds)
+            while queue:
+                entry_va = queue.popleft()
+                if entry_va in discovered or entry_va in covered_pcs:
+                    continue
+                func_dict, new_calls = self.disassemble_function(entry_va, all_known_entries)
+                if func_dict:
+                    discovered[entry_va] = func_dict
+                    for bs, be, _, _ in func_dict["blocks"]:
+                        covered_pcs.update(range(bs, be))
+                    for call_dest in new_calls:
+                        if call_dest not in all_known_entries and self.in_code(call_dest):
+                            all_known_entries.add(call_dest)
+                            queue.append(call_dest)
 
         print(f"Total discovered functions: {len(discovered)}. Normalizing and validating catalog...")
         raw_catalog = {

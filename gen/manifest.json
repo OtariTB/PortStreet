@@ -1,267 +1,267 @@
 {
   "schema": "nfsu-shards-manifest-v1",
-  "total_functions": 32029,
+  "total_functions": 36391,
   "num_shards": 32,
-  "total_c_size_bytes": 132731387,
+  "total_c_size_bytes": 116424729,
   "fntab_h": "fntab.h",
   "fntab_c": "fntab.c",
-  "generated_utc": "2026-11-02T21:49:36.728922+00:00",
+  "generated_utc": "2026-11-07T20:21:20.869578+00:00",
   "shards": [
     {
       "index": 0,
       "filename": "shard_0000.c",
-      "function_count": 1000,
+      "function_count": 1137,
       "min_address": "0x00401000",
-      "max_address": "0x00430cb0",
-      "file_size_bytes": 3699777
+      "max_address": "0x00430c41",
+      "file_size_bytes": 4250270
     },
     {
       "index": 1,
       "filename": "shard_0001.c",
-      "function_count": 1001,
-      "min_address": "0x00430ce6",
-      "max_address": "0x004690d0",
-      "file_size_bytes": 2983119
+      "function_count": 1137,
+      "min_address": "0x00430c50",
+      "max_address": "0x004656ef",
+      "file_size_bytes": 4076612
     },
     {
       "index": 2,
       "filename": "shard_0002.c",
-      "function_count": 1001,
-      "min_address": "0x00469190",
-      "max_address": "0x004a22e0",
-      "file_size_bytes": 4124676
+      "function_count": 1137,
+      "min_address": "0x00465716",
+      "max_address": "0x0049e610",
+      "file_size_bytes": 4854911
     },
     {
       "index": 3,
       "filename": "shard_0003.c",
-      "function_count": 1001,
-      "min_address": "0x004a23f0",
-      "max_address": "0x004e4e10",
-      "file_size_bytes": 2764365
+      "function_count": 1137,
+      "min_address": "0x0049e660",
+      "max_address": "0x004daf80",
+      "file_size_bytes": 4059821
     },
     {
       "index": 4,
       "filename": "shard_0004.c",
-      "function_count": 1001,
-      "min_address": "0x004e4e55",
-      "max_address": "0x0051f130",
-      "file_size_bytes": 3285925
+      "function_count": 1137,
+      "min_address": "0x004db110",
+      "max_address": "0x00503340",
+      "file_size_bytes": 2690140
     },
     {
       "index": 5,
       "filename": "shard_0005.c",
-      "function_count": 1001,
-      "min_address": "0x0051f240",
-      "max_address": "0x00540680",
-      "file_size_bytes": 2033842
+      "function_count": 1137,
+      "min_address": "0x00503350",
+      "max_address": "0x00533010",
+      "file_size_bytes": 3659580
     },
     {
       "index": 6,
       "filename": "shard_0006.c",
-      "function_count": 1001,
-      "min_address": "0x00540740",
-      "max_address": "0x00589920",
-      "file_size_bytes": 4655922
+      "function_count": 1137,
+      "min_address": "0x00533024",
+      "max_address": "0x0054bdd0",
+      "file_size_bytes": 1755941
     },
     {
       "index": 7,
       "filename": "shard_0007.c",
-      "function_count": 1001,
-      "min_address": "0x00589f00",
-      "max_address": "0x005a6c30",
-      "file_size_bytes": 1960946
+      "function_count": 1137,
+      "min_address": "0x0054bf16",
+      "max_address": "0x0058c840",
+      "file_size_bytes": 5408504
     },
     {
       "index": 8,
       "filename": "shard_0008.c",
-      "function_count": 1001,
-      "min_address": "0x005a6d80",
-      "max_address": "0x005d5850",
-      "file_size_bytes": 2893804
+      "function_count": 1137,
+      "min_address": "0x0058cae0",
+      "max_address": "0x005a9330",
+      "file_size_bytes": 2248648
     },
     {
       "index": 9,
       "filename": "shard_0009.c",
-      "function_count": 1001,
-      "min_address": "0x005d5941",
-      "max_address": "0x006206e0",
-      "file_size_bytes": 5102770
+      "function_count": 1137,
+      "min_address": "0x005a9390",
+      "max_address": "0x005d88d0",
+      "file_size_bytes": 3677958
     },
     {
       "index": 10,
       "filename": "shard_0010.c",
-      "function_count": 1000,
-      "min_address": "0x00620840",
-      "max_address": "0x00649460",
-      "file_size_bytes": 4174702
+      "function_count": 1137,
+      "min_address": "0x005d8a20",
+      "max_address": "0x00621a80",
+      "file_size_bytes": 5803204
     },
     {
       "index": 11,
       "filename": "shard_0011.c",
-      "function_count": 1001,
-      "min_address": "0x00649472",
-      "max_address": "0x00672f50",
-      "file_size_bytes": 2611508
+      "function_count": 1137,
+      "min_address": "0x00621ae0",
+      "max_address": "0x006494c4",
+      "file_size_bytes": 5119654
     },
     {
       "index": 12,
       "filename": "shard_0012.c",
-      "function_count": 1001,
-      "min_address": "0x00672f60",
-      "max_address": "0x006a68e0",
-      "file_size_bytes": 2570441
+      "function_count": 1137,
+      "min_address": "0x006494ce",
+      "max_address": "0x00672300",
+      "file_size_bytes": 2977316
     },
     {
       "index": 13,
       "filename": "shard_0013.c",
-      "function_count": 1001,
-      "min_address": "0x006a68f0",
-      "max_address": "0x006de010",
-      "file_size_bytes": 2508663
+      "function_count": 1137,
+      "min_address": "0x006723c0",
+      "max_address": "0x006a6f90",
+      "file_size_bytes": 3170285
     },
     {
       "index": 14,
       "filename": "shard_0014.c",
-      "function_count": 1001,
-      "min_address": "0x006df120",
-      "max_address": "0x007234a0",
-      "file_size_bytes": 5368592
+      "function_count": 1137,
+      "min_address": "0x006a7000",
+      "max_address": "0x006e0b68",
+      "file_size_bytes": 3568982
     },
     {
       "index": 15,
       "filename": "shard_0015.c",
-      "function_count": 1001,
-      "min_address": "0x00723660",
-      "max_address": "0x0075bb60",
-      "file_size_bytes": 3196870
+      "function_count": 1138,
+      "min_address": "0x006e0ca0",
+      "max_address": "0x0071f5e0",
+      "file_size_bytes": 6134159
     },
     {
       "index": 16,
       "filename": "shard_0016.c",
-      "function_count": 1001,
-      "min_address": "0x0075bd00",
-      "max_address": "0x007b2700",
-      "file_size_bytes": 5418442
+      "function_count": 1137,
+      "min_address": "0x0071f680",
+      "max_address": "0x00752ae0",
+      "file_size_bytes": 3914460
     },
     {
       "index": 17,
       "filename": "shard_0017.c",
-      "function_count": 1001,
-      "min_address": "0x007b2730",
-      "max_address": "0x007d8020",
-      "file_size_bytes": 2164901
+      "function_count": 1137,
+      "min_address": "0x00752b40",
+      "max_address": "0x0079d370",
+      "file_size_bytes": 6305258
     },
     {
       "index": 18,
       "filename": "shard_0018.c",
-      "function_count": 1001,
-      "min_address": "0x007d8040",
-      "max_address": "0x0080fcc2",
-      "file_size_bytes": 3782514
+      "function_count": 1137,
+      "min_address": "0x0079d3a0",
+      "max_address": "0x007cfde0",
+      "file_size_bytes": 3275358
     },
     {
       "index": 19,
       "filename": "shard_0019.c",
-      "function_count": 1001,
-      "min_address": "0x0080fcf2",
-      "max_address": "0x0082fea0",
-      "file_size_bytes": 2357495
+      "function_count": 1137,
+      "min_address": "0x007cfdf2",
+      "max_address": "0x0080bd02",
+      "file_size_bytes": 4129800
     },
     {
       "index": 20,
       "filename": "shard_0020.c",
-      "function_count": 1001,
-      "min_address": "0x0082feb0",
-      "max_address": "0x008559e0",
-      "file_size_bytes": 2388186
+      "function_count": 1137,
+      "min_address": "0x0080bd0a",
+      "max_address": "0x0082ef70",
+      "file_size_bytes": 2685576
     },
     {
       "index": 21,
       "filename": "shard_0021.c",
-      "function_count": 1000,
-      "min_address": "0x008559f0",
-      "max_address": "0x0087fa30",
-      "file_size_bytes": 2955476
+      "function_count": 1137,
+      "min_address": "0x0082efe0",
+      "max_address": "0x00858420",
+      "file_size_bytes": 2670838
     },
     {
       "index": 22,
       "filename": "shard_0022.c",
-      "function_count": 1001,
-      "min_address": "0x0087fdc0",
-      "max_address": "0x008af480",
-      "file_size_bytes": 3122438
+      "function_count": 1137,
+      "min_address": "0x00858470",
+      "max_address": "0x0088ec20",
+      "file_size_bytes": 3624593
     },
     {
       "index": 23,
       "filename": "shard_0023.c",
-      "function_count": 1001,
-      "min_address": "0x008af610",
-      "max_address": "0x009056be",
-      "file_size_bytes": 5949311
+      "function_count": 1140,
+      "min_address": "0x0088ec40",
+      "max_address": "0x008c4950",
+      "file_size_bytes": 3675901
     },
     {
       "index": 24,
       "filename": "shard_0024.c",
-      "function_count": 1001,
-      "min_address": "0x009056c2",
-      "max_address": "0x009338d8",
-      "file_size_bytes": 3302444
+      "function_count": 1138,
+      "min_address": "0x008c49d0",
+      "max_address": "0x0091b760",
+      "file_size_bytes": 6325514
     },
     {
       "index": 25,
       "filename": "shard_0025.c",
-      "function_count": 1001,
-      "min_address": "0x00933910",
-      "max_address": "0x0093b6a0",
-      "file_size_bytes": 290257
+      "function_count": 1138,
+      "min_address": "0x0091c4a0",
+      "max_address": "0x009379f0",
+      "file_size_bytes": 1991698
     },
     {
       "index": 26,
       "filename": "shard_0026.c",
-      "function_count": 1001,
-      "min_address": "0x0093b6a8",
-      "max_address": "0x00942e00",
-      "file_size_bytes": 301969
+      "function_count": 1137,
+      "min_address": "0x00937a20",
+      "max_address": "0x009408d8",
+      "file_size_bytes": 349449
     },
     {
       "index": 27,
       "filename": "shard_0027.c",
-      "function_count": 1001,
-      "min_address": "0x00942e30",
-      "max_address": "0x0094a331",
-      "file_size_bytes": 263460
+      "function_count": 1137,
+      "min_address": "0x00940900",
+      "max_address": "0x00949050",
+      "file_size_bytes": 300802
     },
     {
       "index": 28,
       "filename": "shard_0028.c",
-      "function_count": 1001,
-      "min_address": "0x0094a349",
-      "max_address": "0x0095190b",
-      "file_size_bytes": 279508
+      "function_count": 1137,
+      "min_address": "0x00949058",
+      "max_address": "0x009513ab",
+      "file_size_bytes": 316045
     },
     {
       "index": 29,
       "filename": "shard_0029.c",
-      "function_count": 1001,
-      "min_address": "0x00951916",
-      "max_address": "0x00958ee0",
-      "file_size_bytes": 312139
+      "function_count": 1137,
+      "min_address": "0x009513b6",
+      "max_address": "0x00959a30",
+      "file_size_bytes": 363629
     },
     {
       "index": 30,
       "filename": "shard_0030.c",
-      "function_count": 1001,
-      "min_address": "0x00958f10",
-      "max_address": "0x01a03800",
-      "file_size_bytes": 1031978
+      "function_count": 1137,
+      "min_address": "0x00959a50",
+      "max_address": "0x01a05160",
+      "file_size_bytes": 2656028
     },
     {
       "index": 31,
       "filename": "shard_0031.c",
-      "function_count": 1001,
-      "min_address": "0x01a038a0",
-      "max_address": "0x01f4fa9d",
-      "file_size_bytes": 42565760
+      "function_count": 1138,
+      "min_address": "0x01a05220",
+      "max_address": "0x01f68744",
+      "file_size_bytes": 7667111
     }
   ]
 }
