@@ -2148,9 +2148,15 @@ L_007c9ad8:
 """,
     0x00828ebc: r"""void sub_00828ebc(CPU *c) {
     /* Authentic MSVC __EH_prolog runtime helper */
-    uint32_t scope_table = MR32(c->esp);
-    uint32_t alloc_size  = MR32(c->esp + 4);
-    uint32_t frame_base  = c->esp + 4u;
+    /* Stack layout at entry from lifted caller:
+     * [c->esp + 0]: return address inside caller (ret_addr)
+     * [c->esp + 4]: scope_table pointer (pushed by caller)
+     * [c->esp + 8]: alloc_size (pushed by caller)
+     * [c->esp + 12]: caller's return address to its own caller
+     */
+    uint32_t scope_table = MR32(c->esp + 4u);
+    uint32_t alloc_size  = MR32(c->esp + 8u);
+    uint32_t frame_base  = c->esp + 8u;
     uint32_t old_ebp     = c->ebp;
 
     c->ebp = frame_base;
@@ -2162,14 +2168,27 @@ L_007c9ad8:
     MR32(c->ebp - 16) = MR32(c->fs_base);
     MR32(c->fs_base)  = c->ebp - 16;
 
-    c->esp = c->ebp - 16 - alloc_size - 16;
+    uint32_t saved_ptr = c->ebp - 16 - alloc_size - 16;
+    MR32(saved_ptr + 12) = c->ebx;
+    MR32(saved_ptr + 8)  = c->esi;
+    MR32(saved_ptr + 4)  = c->edi;
+    MR32(saved_ptr + 0)  = (c->ebp >= 0x00100000u && c->ebp < 0x00400000u) ? (MR32(0x00a8be00u) ^ c->ebp) : 0;
+    MR32(c->ebp - 0x18)  = saved_ptr;
+
+    c->esp = saved_ptr;
 }
 """,
     0x00828f01: r"""void sub_00828f01(CPU *c) {
     /* Authentic MSVC __EH_epilog runtime helper */
     MR32(c->fs_base) = MR32(c->ebp - 16);
+    uint32_t saved_ptr = MR32(c->ebp - 0x18);
+    if (saved_ptr >= 0x00100000u && saved_ptr < 0x00400000u) {
+        c->edi = MR32(saved_ptr + 4);
+        c->esi = MR32(saved_ptr + 8);
+        c->ebx = MR32(saved_ptr + 12);
+    }
     uint32_t old_ebp = MR32(c->ebp);
-    c->esp = c->ebp + 8;
+    c->esp = c->ebp + 4u;
     c->ebp = old_ebp;
 }
 """,

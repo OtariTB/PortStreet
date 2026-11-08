@@ -235,6 +235,10 @@ static inline guest_fn_t dispatch_fast(uint32_t a) {
     _r_cf = c->cf; _r_pf = c->pf; _r_af = c->af; _r_zf = c->zf; _r_sf = c->sf; _r_of = c->of; \
 } while (0)
 
+#define LR_RELOAD_FLAGS do { \
+    _r_cf = c->cf; _r_pf = c->pf; _r_af = c->af; _r_zf = c->zf; _r_sf = c->sf; _r_of = c->of; \
+} while (0)
+
 static inline uint32_t parity8(uint32_t v) {
     v &= 0xff; v ^= v >> 4; v ^= v >> 2; v ^= v >> 1;
     return (~v) & 1;

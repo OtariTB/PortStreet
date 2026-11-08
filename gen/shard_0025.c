@@ -830,7 +830,7 @@ L_0091fb1b:
     { uint32_t _ci = RG_(cf) & 1u, _a = (uint8_t)RG_(eax), _b = 0x3au, _r = _a - _b - _ci; FLAGS_SBB_M(_a, _b, _ci, _r, 8, 0x00u); RG_(eax) = (RG_(eax) & 0xffffff00u) | (uint32_t)((_r) & 0xffu); }
     /* Unsupported: lcall 0xc00, 0x9d00 (Unsupported mnemonic: lcall (0xc00, 0x9d00)) */
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _a = MR8(RG_(eax)), _b = (uint8_t)RG_(eax), _r = _a + _b; FLAGS_ADD_M(_a, _b, _r, 8, 0x01u); MR8(RG_(eax)) = (_r); }
     { uint32_t _ci = RG_(cf) & 1u, _a = (uint8_t)RG_(eax), _b = 0x3au, _r = _a - _b - _ci; FLAGS_SBB_M(_a, _b, _ci, _r, 8, 0x00u); RG_(eax) = (RG_(eax) & 0xffffff00u) | (uint32_t)((_r) & 0xffu); }
     /* Unsupported: lcall 0xc00, 0x9e00 (Unsupported mnemonic: lcall (0xc00, 0x9e00)) */

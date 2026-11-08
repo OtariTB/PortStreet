@@ -1,6 +1,6 @@
 {
   "schema": "nfsu-shards-manifest-v1",
-  "total_functions": 36391,
+  "total_functions": 36398,
   "num_shards": 32,
   "total_c_size_bytes": 116424729,
   "fntab_h": "fntab.h",
@@ -18,7 +18,7 @@
     {
       "index": 1,
       "filename": "shard_0001.c",
-      "function_count": 1137,
+      "function_count": 1139,
       "min_address": "0x00430c50",
       "max_address": "0x004656ef",
       "file_size_bytes": 4076612
@@ -34,7 +34,7 @@
     {
       "index": 3,
       "filename": "shard_0003.c",
-      "function_count": 1137,
+      "function_count": 1138,
       "min_address": "0x0049e660",
       "max_address": "0x004daf80",
       "file_size_bytes": 4059821
@@ -202,7 +202,7 @@
     {
       "index": 24,
       "filename": "shard_0024.c",
-      "function_count": 1138,
+      "function_count": 1142,
       "min_address": "0x008c49d0",
       "max_address": "0x0091b760",
       "file_size_bytes": 6325514

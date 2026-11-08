@@ -61578,9 +61578,15 @@ L_00828eb4:
 
 void sub_00828ebc(CPU *c) {
     /* Authentic MSVC __EH_prolog runtime helper */
-    uint32_t scope_table = MR32(c->esp);
-    uint32_t alloc_size  = MR32(c->esp + 4);
-    uint32_t frame_base  = c->esp + 4u;
+    /* Stack layout at entry from lifted caller:
+     * [c->esp + 0]: return address inside caller (ret_addr)
+     * [c->esp + 4]: scope_table pointer (pushed by caller)
+     * [c->esp + 8]: alloc_size (pushed by caller)
+     * [c->esp + 12]: caller's return address to its own caller
+     */
+    uint32_t scope_table = MR32(c->esp + 4u);
+    uint32_t alloc_size  = MR32(c->esp + 8u);
+    uint32_t frame_base  = c->esp + 8u;
     uint32_t old_ebp     = c->ebp;
 
     c->ebp = frame_base;
@@ -61592,14 +61598,27 @@ void sub_00828ebc(CPU *c) {
     MR32(c->ebp - 16) = MR32(c->fs_base);
     MR32(c->fs_base)  = c->ebp - 16;
 
-    c->esp = c->ebp - 16 - alloc_size - 16;
+    uint32_t saved_ptr = c->ebp - 16 - alloc_size - 16;
+    MR32(saved_ptr + 12) = c->ebx;
+    MR32(saved_ptr + 8)  = c->esi;
+    MR32(saved_ptr + 4)  = c->edi;
+    MR32(saved_ptr + 0)  = (c->ebp >= 0x00100000u && c->ebp < 0x00400000u) ? (MR32(0x00a8be00u) ^ c->ebp) : 0;
+    MR32(c->ebp - 0x18)  = saved_ptr;
+
+    c->esp = saved_ptr;
 }
 
 void sub_00828f01(CPU *c) {
     /* Authentic MSVC __EH_epilog runtime helper */
     MR32(c->fs_base) = MR32(c->ebp - 16);
+    uint32_t saved_ptr = MR32(c->ebp - 0x18);
+    if (saved_ptr >= 0x00100000u && saved_ptr < 0x00400000u) {
+        c->edi = MR32(saved_ptr + 4);
+        c->esi = MR32(saved_ptr + 8);
+        c->ebx = MR32(saved_ptr + 12);
+    }
     uint32_t old_ebp = MR32(c->ebp);
-    c->esp = c->ebp + 8;
+    c->esp = c->ebp + 4u;
     c->ebp = old_ebp;
 }
 
@@ -61694,7 +61713,7 @@ L_00828f8e:
     { uint32_t _r = (RG_(eax)) ^ (0x200000u); FLAGS_LOG_M(_r, 32, 0x00u); RG_(eax) = (uint32_t)(_r); }
     PUSH32(RG_(eax));
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     LR_STORE;
     PUSH32(eflags_get(c));
     { uint32_t _t; POP32(_t); RG_(edx) = (uint32_t)(_t); }
@@ -61703,7 +61722,7 @@ L_00828f8e:
 L_00828fb2:
     PUSH32(RG_(ecx));
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _r = (RG_(eax)) ^ (RG_(eax)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(eax) = (uint32_t)(_r); }
     { uint32_t _leaf = RG_(eax); if (_leaf == 0u) { RG_(eax) = 1u; RG_(ebx) = 0x756e6547u; RG_(edx) = 0x49656e69u; RG_(ecx) = 0x6c65746eu; } else if (_leaf == 1u) { RG_(eax) = 0x00000f41u; RG_(ebx) = 0x00010800u; RG_(ecx) = 0x00000001u; RG_(edx) = 0x078bfbffu; } else if (_leaf == 0x80000000u) { RG_(eax) = 0x80000004u; RG_(ebx) = RG_(ecx) = RG_(edx) = 0u; } else { RG_(eax) = RG_(ebx) = RG_(ecx) = RG_(edx) = 0u; } }
     MR32(RG_(ebp)+0xfffffff4u) = (RG_(eax));

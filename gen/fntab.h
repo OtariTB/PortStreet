@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-/* Forward declarations (36386 functions) */
+/* Forward declarations (36391 functions) */
 void sub_00401000(CPU *c);
 void sub_00401260(CPU *c);
 void sub_00401270(CPU *c);
@@ -2239,6 +2239,8 @@ void sub_00464000(CPU *c);
 void sub_00464014(CPU *c);
 void sub_00464050(CPU *c);
 void sub_00464100(CPU *c);
+void sub_004641f0(CPU *c);
+void sub_00464230(CPU *c);
 void sub_00464240(CPU *c);
 void sub_00464310(CPU *c);
 void sub_004643a0(CPU *c);
@@ -3798,6 +3800,7 @@ void sub_004b0016(CPU *c);
 void sub_004b0050(CPU *c);
 void sub_004b0097(CPU *c);
 void sub_004b00c1(CPU *c);
+void sub_004b0100(CPU *c);
 void sub_004b0340(CPU *c);
 void sub_004b03b0(CPU *c);
 void sub_004b0420(CPU *c);
@@ -28015,6 +28018,7 @@ void sub_00905610(CPU *c);
 void sub_009056be(CPU *c);
 void sub_009056c2(CPU *c);
 void sub_00905760(CPU *c);
+void sub_009058d0(CPU *c);
 void sub_00905982(CPU *c);
 void sub_00905986(CPU *c);
 void sub_00905a20(CPU *c);
@@ -28112,6 +28116,8 @@ void sub_00909280(CPU *c);
 void sub_009092e0(CPU *c);
 void sub_00909310(CPU *c);
 void sub_00909340(CPU *c);
+void sub_00909370(CPU *c);
+void sub_00909550(CPU *c);
 void sub_00909630(CPU *c);
 void sub_009096a0(CPU *c);
 void sub_009097b0(CPU *c);
@@ -28218,6 +28224,7 @@ void sub_0090d300(CPU *c);
 void sub_0090d350(CPU *c);
 void sub_0090d580(CPU *c);
 void sub_0090d640(CPU *c);
+void sub_0090d650(CPU *c);
 void sub_0090d6d0(CPU *c);
 void sub_0090d7a0(CPU *c);
 void sub_0090d910(CPU *c);
@@ -36405,6 +36412,9 @@ void sub_01f68603(CPU *c);
 void sub_01f68606(CPU *c);
 void sub_01f686e7(CPU *c);
 void sub_01f68744(CPU *c);
+
+/* Authentic SecuROM VM constant evaluator (ars section) */
+void sub_010fa200(CPU *c);
 
 /* Master dispatch table initialization (call during engine boot) */
 void fntab_init(void);

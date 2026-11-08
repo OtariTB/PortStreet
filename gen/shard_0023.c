@@ -59123,7 +59123,7 @@ L_008b04e0:
     { uint32_t _r = (RG_(eax)) ^ (0x200000u); FLAGS_LOG_M(_r, 32, 0x00u); RG_(eax) = (uint32_t)(_r); }
     PUSH32(RG_(eax));
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     LR_STORE;
     PUSH32(eflags_get(c));
     { uint32_t _t; POP32(_t); RG_(eax) = (uint32_t)(_t); }
@@ -59132,7 +59132,7 @@ L_008b04e0:
     RG_(esp) = (uint32_t)(RG_(ebx));
     { uint32_t _t; POP32(_t); RG_(ebx) = (uint32_t)(_t); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _t; POP32(_t); RG_(ecx) = (uint32_t)(_t); }
     RG_(eax) = (uint32_t)(MR32(RG_(ebp)+0xfffffffcu));
     { uint32_t _t; POP32(_t); RG_(ebx) = (uint32_t)(_t); }

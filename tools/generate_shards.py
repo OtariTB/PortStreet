@@ -60,6 +60,9 @@ def generate_fntab_header(functions: Sequence[dict[str, Any]]) -> str:
 
     lines.extend([
         "",
+        "/* Authentic SecuROM VM constant evaluator (ars section) */",
+        "void sub_010fa200(CPU *c);",
+        "",
         "/* Master dispatch table initialization (call during engine boot) */",
         "void fntab_init(void);",
         "",
@@ -188,6 +191,45 @@ def generate_fntab_source(
         "    memset(s_unresolved_dispatches, 0, sizeof(s_unresolved_dispatches));",
         "}",
         "",
+        "/* SecuROM VM runtime constant evaluator stub (VA 0x010fa200 in section ars)",
+        " * Evaluates pure descriptor constants and cleans caller stack arguments (ret 8).",
+        " */",
+        "void sub_010fa200(CPU *c) {",
+        "    uint32_t desc = MR32(c->esp + 4u);",
+        "    uint32_t val = 0;",
+        "    switch (desc) {",
+        "    case 0x019eb2deu: val = 0x00000000u; break;",
+        "    case 0x019eb40du: val = 0x00aa9854u; break;",
+        "    case 0x019eb48eu: val = 0x4ec4ec4fu; break;",
+        "    case 0x019eb66du: val = 0xa13753ebu; break;",
+        "    case 0x019eb7c8u: val = 0x00001349u; break;",
+        "    case 0x019eb94fu: val = 0x0000308au; break;",
+        "    case 0x019eb9a8u: val = 0x00000001u; break;",
+        "    case 0x019ebb0bu: val = 0x00000000u; break;",
+        "    case 0x019ebcc3u: val = 0x00000001u; break;",
+        "    case 0x019ebfd3u: val = 0x0096aa88u; break;",
+        "    case 0x019ec086u: val = 0x00000002u; break;",
+        "    case 0x019ec2bbu: val = 0x20000000u; break;",
+        "    case 0x019ec546u: val = 0x009ee914u; break;",
+        "    case 0x019efaabu: val = 0x00002938u; break;",
+        "    case 0x019efff7u: val = 0x00000000u; break;",
+        "    case 0x019f0149u: val = 0x00000000u; break;",
+        "    case 0x019f022bu: val = 0x000031dcu; break;",
+        "    case 0x019f0255u: val = 0xffff0000u; break;",
+        "    case 0x019f0282u: val = 0x00000001u; break;",
+        "    case 0x019f95d1u: val = 0x00000000u; break;",
+        "    case 0x01a175e8u: val = 0x00000000u; break;",
+        "    case 0x01bcc295u: val = 0x00000000u; break;",
+        "    case 0x01df6099u: val = 0x00000000u; break;",
+        "    default:",
+        '        fprintf(stderr, "[SECUROM VM] Unknown descriptor 0x%08x at 0x010fa200\\n", desc);',
+        "        val = 0;",
+        "        break;",
+        "    }",
+        "    c->eax = val;",
+        "    c->esp += 12u;",
+        "}",
+        "",
         "void dispatch_indirect(struct CPU *c, uint32_t addr) {",
         "    if (c) cpu_trace_record(c, addr);",
         "    uint32_t off = addr - DISPATCH_TEXT_BASE;",
@@ -196,6 +238,7 @@ def generate_fntab_source(
         "        if (fn) { fn(c); return; }",
         "    }",
         "    switch (addr) {",
+        "    case 0x010fa200u: sub_010fa200(c); return;",
     ])
 
     for f in non_text_funcs:
@@ -483,6 +526,7 @@ def main() -> None:
     parser.add_argument("--out-dir", type=str, default="gen", help="Output directory (default: gen)")
     parser.add_argument("--max-functions", type=int, default=None, help="Optional limit on functions to lift")
     parser.add_argument("--lift-single", type=lambda x: int(x, 0), default=None, help="VA of single function to lift and update in-place")
+    parser.add_argument("--fntab-only", action="store_true", help="Regenerate only gen/fntab.h and gen/fntab.c without rebuilding shards")
     args = parser.parse_args()
 
     cfg_path = WORKSPACE / "config" / "local.json"
@@ -506,6 +550,24 @@ def main() -> None:
         print(f"Lifting single function 0x{target_va:08x} from {exe_path.name}...")
         shard = lift_single_function(target_va, raw_exe, out_dir)
         print(f"Successfully lifted and updated 0x{target_va:08x} in {shard.name}, fntab.h, and fntab.c.")
+        return
+
+    if args.fntab_only:
+        catalog_path = WORKSPACE / "research" / "local" / "phase1" / "catalog.json"
+        if not catalog_path.is_file():
+            sys.exit(f"Catalog not found at {catalog_path}")
+        print("Regenerating gen/fntab.h and gen/fntab.c...")
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        sorted_funcs = sorted(catalog["functions"], key=lambda f: f["address"])
+        t_path = WORKSPACE / "research" / "local" / "phase1" / "securom_trampolines.json"
+        trampoline_data = None
+        if t_path.is_file():
+            trampoline_data = json.loads(t_path.read_text(encoding="utf-8"))
+        fntab_h_content = generate_fntab_header(sorted_funcs)
+        (out_dir / "fntab.h").write_text(fntab_h_content, encoding="utf-8")
+        fntab_c_content = generate_fntab_source(sorted_funcs, trampoline_data=trampoline_data)
+        (out_dir / "fntab.c").write_text(fntab_c_content, encoding="utf-8")
+        print("Successfully regenerated gen/fntab.h and gen/fntab.c.")
         return
 
     catalog_path = WORKSPACE / "research" / "local" / "phase1" / "catalog.json"

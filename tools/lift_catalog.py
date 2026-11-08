@@ -1715,7 +1715,7 @@ class InstructionLifter:
 
         if m in ("popfd", "popf"):
             if self.use_rg:
-                return ["{ uint32_t _f; POP32(_f); eflags_set(c, _f); }", "LR_RELOAD;"]
+                return ["{ uint32_t _f; POP32(_f); eflags_set(c, _f); }", "LR_RELOAD_FLAGS;"]
             return ["{ uint32_t _f; POP32(_f); eflags_set(c, _f); }"]
 
         # Rotations

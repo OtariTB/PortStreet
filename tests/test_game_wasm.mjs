@@ -152,7 +152,7 @@ async function run() {
         instance.exports.boot_install_hooks();
 
         const CPU_STRUCT_VA = 0x00104000;
-        const WORKER_POOL_SIZE = 4;
+        const WORKER_POOL_SIZE = 8;
         wasmMem.fill(0, CPU_STRUCT_VA, CPU_STRUCT_VA + 0x400);
         for (let s = 0; s < 8; s++) {
             const wcpu = 0x00105000 + s * 0x0400;
@@ -214,6 +214,7 @@ async function run() {
     console.log('[5/5] Executing genuine C++ static initializers in WebAssembly...');
     const t_init = Date.now();
     let current_ctor = 0, current_fn = 0;
+    let monitorWorker = null;
     try {
         let count = 0;
         for (let p = 0x00967608; p < 0x0096a1f4; p += 4) {
@@ -278,6 +279,16 @@ async function run() {
     console.log('[6/5] Setting up main() arguments and entering genuine ProStreet main()...');
     instance.exports.boot_setup_arguments(CPU_STRUCT_VA, 1, 0);
     dv.setUint32(CPU_STRUCT_VA + 32, 0x004afee0, true);
+
+    monitorWorker = new Worker(path.resolve(__dirname, 'monitor_worker.mjs'), {
+        workerData: { sharedMemory }
+    });
+    monitorWorker.on('error', (err) => console.error('[Monitor Error]:', err));
+    await new Promise((resolve) => {
+        monitorWorker.on('message', (msg) => {
+            if (msg === 'READY') resolve();
+        });
+    });
 
     const t_main = Date.now();
     try {
@@ -374,6 +385,9 @@ async function run() {
         dumpCPU(dv, wCpuVa, `Worker Slot #${s} CPU`);
     }
     } finally {
+        if (monitorWorker) {
+            try { await monitorWorker.terminate(); } catch (e) {}
+        }
         if (instance && instance.exports.guest_worker_thread_stop) {
             try { instance.exports.guest_worker_thread_stop(); } catch (e) {}
         }

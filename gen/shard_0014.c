@@ -1423,7 +1423,7 @@ L_00536796:
     RG_(esi) = (uint32_t)(~(RG_(esi)));
     { uint32_t _r = (RG_(esi)) ^ (MR32(0x11b8c80u)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(esi) = (uint32_t)(_r); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(esi)); RG_(esi) = (uint32_t)(_old); }
     goto L_006a7c17;
 L_006a7c17:
@@ -19744,7 +19744,7 @@ L_00512cd8:
     RG_(edx) = (uint32_t)(MR32(0x14b8ad0u));
     { uint32_t _r = (RG_(edx)) ^ (MR32(0x19eef54u)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(edx) = (uint32_t)(_r); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(edx)); RG_(edx) = (uint32_t)(_old); }
     goto L_006b1ef7;
 L_006b1ef7:
@@ -21011,7 +21011,7 @@ L_0053ab26:
     RG_(ebp) = (uint32_t)(MR32(0x19ef0e4u));
     { uint32_t _ci = RG_(cf) & 1u, _a = RG_(ebp), _b = MR32(0x453141u), _r = _a - _b - _ci; FLAGS_SBB_M(_a, _b, _ci, _r, 32, 0x00u); RG_(ebp) = (uint32_t)(_r); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(ebp)); RG_(ebp) = (uint32_t)(_old); }
     goto L_006b2837;
 L_006b2837:
@@ -41119,7 +41119,7 @@ L_004f4866:
     { uint32_t _c = ((uint8_t)RG_(ecx)) & 31u; if (_c) { uint32_t _v = (RG_(edi)) & 0xffffffffu; uint32_t _s = _c % 32u; uint32_t _r = _s ? (((_v >> _s) | (_v << (32u - _s))) & 0xffffffffu) : _v; RG_(cf) = (_r >> (31u)) & 1u; if (_c == 1u) RG_(of) = ((_r >> (31u)) & 1u) ^ ((_r >> (30u)) & 1u); RG_(edi) = (uint32_t)(_r); } }
     { uint32_t _t; POP32(_t); RG_(ecx) = (uint32_t)(_t); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(edi)); RG_(edi) = (uint32_t)(_old); }
     goto L_006c2027;
 L_006c2027:
@@ -44671,7 +44671,7 @@ L_00431766:
     RG_(ecx) = (uint32_t)(MR32(0x19eec6cu));
     { uint32_t _ci = RG_(cf) & 1u, _a = RG_(ecx), _b = MR32(0x485c7au), _r = _a - _b - _ci; FLAGS_SBB_M(_a, _b, _ci, _r, 32, 0x00u); RG_(ecx) = (uint32_t)(_r); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(ecx)); RG_(ecx) = (uint32_t)(_old); }
     goto L_006c8c47;
 L_006c8c47:
@@ -53336,7 +53336,7 @@ L_00500146:
     RG_(ecx) = (uint32_t)(MR32(0x19eef0cu));
     { uint32_t _r = (RG_(ecx)) ^ (MR32(0x62ee26u)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(ecx) = (uint32_t)(_r); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(ecx)); RG_(ecx) = (uint32_t)(_old); }
     goto L_006cd227;
 L_006cd227:
@@ -59978,7 +59978,7 @@ L_00520aca:
     RG_(ebx) = (uint32_t)(MR32(0x19eef60u));
     { uint32_t _a = RG_(ebx), _b = MR32(0x1a1a9a4u), _r = _a + _b; FLAGS_ADD_M(_a, _b, _r, 32, 0x00u); RG_(ebx) = (uint32_t)(_r); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(ebx)); RG_(ebx) = (uint32_t)(_old); }
     goto L_006d0e07;
 L_006d0e07:
@@ -64539,10 +64539,55 @@ L_006d34e2:
     { uint32_t _a = RG_(esp), _b = 0x4u, _r = _a + _b; FLAGS_ADD_M(_a, _b, _r, 32, 0x00u); RG_(esp) = (uint32_t)(_r); }
     { uint32_t _a = RG_(esi), _b = 0xa61238u, _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x08u); }
     RG_(edi) = (uint32_t)(RG_(eax));
+    {
+        static int s_logged = 0;
+        if (!s_logged) {
+            s_logged = 1;
+            uint32_t h_next = MR32(0x00a61238u);
+            uint32_t h_prev = MR32(0x00a6123cu);
+            fprintf(stderr, "[DIAG_LIST] Head at 0x00A61238: next=0x%08x, prev=0x%08x | Entry ESI=0x%08x, EDI(key)=0x%08x\n",
+                    h_next, h_prev, RG_(esi), RG_(edi));
+            uint32_t visited[32];
+            uint32_t cur = h_next;
+            int count = 0;
+            int cycle = 0;
+            while (cur != 0x00a61238u && count < 32) {
+                for (int v = 0; v < count; v++) {
+                    if (visited[v] == cur) {
+                        fprintf(stderr, "[DIAG_LIST] CYCLE: Node 0x%08x repeated at step %d (first seen at %d)\n", cur, count, v);
+                        cycle = 1;
+                        break;
+                    }
+                }
+                if (cycle) break;
+                visited[count] = cur;
+                if (cur < 0x00100000u || cur >= 0x28000000u) {
+                    fprintf(stderr, "[DIAG_LIST] INVALID PTR: 0x%08x at step %d\n", cur, count);
+                    break;
+                }
+                uint32_t n_next = MR32(cur);
+                uint32_t n_prev = MR32(cur + 4u);
+                uint32_t n_cnt  = MR32(cur + 12u);
+                fprintf(stderr, "[DIAG_LIST] Node[%d] 0x%08x: next=0x%08x, prev=0x%08x, count=%u\n", count, cur, n_next, n_prev, n_cnt);
+                cur = n_next;
+                count++;
+            }
+            if (cur == 0x00a61238u) {
+                fprintf(stderr, "[DIAG_LIST] Traversal reached sentinel 0x00A61238 after %d nodes.\n", count);
+            }
+            fflush(stderr);
+        }
+    }
     if (CC_E) goto L_006d3518;
 L_006d34ef:
     /* nop */
+    uint32_t _outer_guard = 0;
 L_006d34f0:
+    if (++_outer_guard > 64) {
+        fprintf(stderr, "[DIAG_LIST] Bounded guard: outer loop exceeded 64 iterations, ESI=0x%08x! Breaking to prevent hang.\n", RG_(esi));
+        fflush(stderr);
+        goto L_006d3518;
+    }
     RG_(edx) = (uint32_t)(MR32(RG_(esi)+0xcu));
     { uint32_t _r = (RG_(ecx)) ^ (RG_(ecx)); FLAGS_LOG_M(_r, 32, 0x00u); RG_(ecx) = (uint32_t)(_r); }
     { uint32_t _r = (RG_(edx)) & (RG_(edx)); FLAGS_LOG_M(_r, 32, 0x38u); }
@@ -66392,7 +66437,7 @@ L_0053aaf6:
     RG_(esi) = (uint32_t)(MR32(0x19ef0e0u));
     { uint32_t _a = RG_(esi), _b = MR32(0x659a12u), _r = _a + _b; FLAGS_ADD_M(_a, _b, _r, 32, 0x00u); RG_(esi) = (uint32_t)(_r); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(esi)); RG_(esi) = (uint32_t)(_old); }
     goto L_006d4727;
 L_006d4727:
@@ -68046,7 +68091,7 @@ L_0052ab96:
     RG_(esi) = (uint32_t)(MR32(0x19eef8cu));
     { uint32_t _ci = RG_(cf) & 1u, _a = RG_(esi), _b = MR32(0x1a10d24u), _r = _a + _b + _ci; FLAGS_ADC_M(_a, _b, _ci, _r, 32, 0x00u); RG_(esi) = (uint32_t)(_r); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(esi)); RG_(esi) = (uint32_t)(_old); }
     goto L_006d56c7;
 L_006d56c7:
@@ -69065,7 +69110,7 @@ L_0044c3f0:
     RG_(edi) = (uint32_t)(MR32(0x19eec9cu));
     { uint32_t _a = RG_(edi), _b = MR32(0x45a34au), _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x00u); RG_(edi) = (uint32_t)(_r); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(edi)); RG_(edi) = (uint32_t)(_old); }
     goto L_006d5e67;
 L_006d5e67:
@@ -71130,7 +71175,7 @@ L_00536656:
     RG_(ebp) = (uint32_t)(MR32(0x19ef074u));
     { uint32_t _ci = RG_(cf) & 1u, _a = RG_(ebp), _b = MR32(0x1a089fbu), _r = _a - _b - _ci; FLAGS_SBB_M(_a, _b, _ci, _r, 32, 0x00u); RG_(ebp) = (uint32_t)(_r); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(ebp)); RG_(ebp) = (uint32_t)(_old); }
     goto L_006d6b07;
 L_006d6b07:
@@ -76335,7 +76380,7 @@ L_00537b76:
     RG_(edi) = (uint32_t)(MR32(0x19ef094u));
     { uint32_t _ci = RG_(cf) & 1u, _a = RG_(edi), _b = MR32(0x4df161u), _r = _a - _b - _ci; FLAGS_SBB_M(_a, _b, _ci, _r, 32, 0x00u); RG_(edi) = (uint32_t)(_r); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(edi)); RG_(edi) = (uint32_t)(_old); }
     goto L_006d8c67;
 L_006d8c67:
@@ -81845,7 +81890,7 @@ L_0052aa5e:
     { uint32_t _c = ((uint8_t)RG_(ecx)) & 31u; if (_c) { uint32_t _v = (RG_(ebx)) & 0xffffffffu; uint32_t _s = _c % 32u; uint32_t _r = _s ? (((_v << _s) | (_v >> (32u - _s))) & 0xffffffffu) : _v; RG_(cf) = _r & 1u; if (_c == 1u) RG_(of) = ((_r >> (31u)) & 1u) ^ (_r & 1u); RG_(ebx) = (uint32_t)(_r); } }
     { uint32_t _t; POP32(_t); RG_(ecx) = (uint32_t)(_t); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(ebx)); RG_(ebx) = (uint32_t)(_old); }
     goto L_006dbf57;
 L_006dbf57:
@@ -82638,7 +82683,7 @@ L_00511710:
     RG_(edi) = (uint32_t)(MR32(0x19eef50u));
     { uint32_t _ci = RG_(cf) & 1u, _a = RG_(edi), _b = MR32(0x428351u), _r = _a + _b + _ci; FLAGS_ADC_M(_a, _b, _ci, _r, 32, 0x00u); RG_(edi) = (uint32_t)(_r); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(edi)); RG_(edi) = (uint32_t)(_old); }
     goto L_006dc497;
 L_006dc497:
@@ -85875,7 +85920,7 @@ L_004fcc56:
     { uint32_t _c = ((uint8_t)RG_(ecx)) & 31u; if (_c) { uint32_t _v = (RG_(ebx)) & 0xffffffffu; uint32_t _s = _c % 32u; uint32_t _r = _s ? (((_v << _s) | (_v >> (32u - _s))) & 0xffffffffu) : _v; RG_(cf) = _r & 1u; if (_c == 1u) RG_(of) = ((_r >> (31u)) & 1u) ^ (_r & 1u); RG_(ebx) = (uint32_t)(_r); } }
     { uint32_t _t; POP32(_t); RG_(ecx) = (uint32_t)(_t); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     { uint32_t _ea = (RG_(esp)), _old = PS_ATOMIC_XCHG32(_ea, RG_(ebx)); RG_(ebx) = (uint32_t)(_old); }
     goto L_006df127;
 L_006df127:

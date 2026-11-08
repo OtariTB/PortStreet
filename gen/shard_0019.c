@@ -13562,7 +13562,7 @@ void sub_007d656d(CPU *c) {
 L_007d656d:
     { uint32_t _a = RG_(eax), _b = RG_(ebp), _r = _a - _b; FLAGS_SUB_M(_a, _b, _r, 32, 0x00u); }
     { uint32_t _f; POP32(_f); eflags_set(c, _f); }
-    LR_RELOAD;
+    LR_RELOAD_FLAGS;
     PUSH32(0x23u);
     { double _d = ST(7), _s = ST(0); ST(7) = X87R2(_d, _s, _d / _s); }
     FPOP();

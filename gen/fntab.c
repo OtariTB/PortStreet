@@ -2235,6 +2235,8 @@ static void fntab_init_chunk_0(void) {
     g_dtab[0x00063014u] = sub_00464014;
     g_dtab[0x00063050u] = sub_00464050;
     g_dtab[0x00063100u] = sub_00464100;
+    g_dtab[0x000631f0u] = sub_004641f0;
+    g_dtab[0x00063230u] = sub_00464230;
     g_dtab[0x00063240u] = sub_00464240;
     g_dtab[0x00063310u] = sub_00464310;
     g_dtab[0x000633a0u] = sub_004643a0;
@@ -3797,6 +3799,7 @@ static void fntab_init_chunk_1(void) {
     g_dtab[0x000af050u] = sub_004b0050;
     g_dtab[0x000af097u] = sub_004b0097;
     g_dtab[0x000af0c1u] = sub_004b00c1;
+    g_dtab[0x000af100u] = sub_004b0100;
     g_dtab[0x000af340u] = sub_004b0340;
     g_dtab[0x000af3b0u] = sub_004b03b0;
     g_dtab[0x000af420u] = sub_004b0420;
@@ -27540,12 +27543,12 @@ static void fntab_init_chunk_10(void) {
     g_dtab[0x004d3e50u] = sub_008d4e50;
     g_dtab[0x004d3eb0u] = sub_008d4eb0;
     g_dtab[0x004d4170u] = sub_008d5170;
-    g_dtab[0x004d41a0u] = sub_008d51a0;
-    g_dtab[0x004d41f0u] = sub_008d51f0;
-    g_dtab[0x004d4240u] = sub_008d5240;
 }
 
 static void fntab_init_chunk_11(void) {
+    g_dtab[0x004d41a0u] = sub_008d51a0;
+    g_dtab[0x004d41f0u] = sub_008d51f0;
+    g_dtab[0x004d4240u] = sub_008d5240;
     g_dtab[0x004d4260u] = sub_008d5260;
     g_dtab[0x004d43d0u] = sub_008d53d0;
     g_dtab[0x004d44a0u] = sub_008d54a0;
@@ -28044,6 +28047,7 @@ static void fntab_init_chunk_11(void) {
     g_dtab[0x005046beu] = sub_009056be;
     g_dtab[0x005046c2u] = sub_009056c2;
     g_dtab[0x00504760u] = sub_00905760;
+    g_dtab[0x005048d0u] = sub_009058d0;
     g_dtab[0x00504982u] = sub_00905982;
     g_dtab[0x00504986u] = sub_00905986;
     g_dtab[0x00504a20u] = sub_00905a20;
@@ -28141,6 +28145,8 @@ static void fntab_init_chunk_11(void) {
     g_dtab[0x005082e0u] = sub_009092e0;
     g_dtab[0x00508310u] = sub_00909310;
     g_dtab[0x00508340u] = sub_00909340;
+    g_dtab[0x00508370u] = sub_00909370;
+    g_dtab[0x00508550u] = sub_00909550;
     g_dtab[0x00508630u] = sub_00909630;
     g_dtab[0x005086a0u] = sub_009096a0;
     g_dtab[0x005087b0u] = sub_009097b0;
@@ -28247,6 +28253,7 @@ static void fntab_init_chunk_11(void) {
     g_dtab[0x0050c350u] = sub_0090d350;
     g_dtab[0x0050c580u] = sub_0090d580;
     g_dtab[0x0050c640u] = sub_0090d640;
+    g_dtab[0x0050c650u] = sub_0090d650;
     g_dtab[0x0050c6d0u] = sub_0090d6d0;
     g_dtab[0x0050c7a0u] = sub_0090d7a0;
     g_dtab[0x0050c910u] = sub_0090d910;
@@ -30043,14 +30050,14 @@ static void fntab_init_chunk_11(void) {
     g_dtab[0x0053a3a0u] = sub_0093b3a0;
     g_dtab[0x0053a3d0u] = sub_0093b3d0;
     g_dtab[0x0053a400u] = sub_0093b400;
+}
+
+static void fntab_init_chunk_12(void) {
     g_dtab[0x0053a430u] = sub_0093b430;
     g_dtab[0x0053a460u] = sub_0093b460;
     g_dtab[0x0053a490u] = sub_0093b490;
     g_dtab[0x0053a4c0u] = sub_0093b4c0;
     g_dtab[0x0053a4f0u] = sub_0093b4f0;
-}
-
-static void fntab_init_chunk_12(void) {
     g_dtab[0x0053a520u] = sub_0093b520;
     g_dtab[0x0053a550u] = sub_0093b550;
     g_dtab[0x0053a558u] = sub_0093b558;
@@ -32546,14 +32553,14 @@ static void fntab_init_chunk_12(void) {
     g_dtab[0x0054cc90u] = sub_0094dc90;
     g_dtab[0x0054cca4u] = sub_0094dca4;
     g_dtab[0x0054cce0u] = sub_0094dce0;
+}
+
+static void fntab_init_chunk_13(void) {
     g_dtab[0x0054cce8u] = sub_0094dce8;
     g_dtab[0x0054cd10u] = sub_0094dd10;
     g_dtab[0x0054cd18u] = sub_0094dd18;
     g_dtab[0x0054cd20u] = sub_0094dd20;
     g_dtab[0x0054cd50u] = sub_0094dd50;
-}
-
-static void fntab_init_chunk_13(void) {
     g_dtab[0x0054cd58u] = sub_0094dd58;
     g_dtab[0x0054cd60u] = sub_0094dd60;
     g_dtab[0x0054cd6bu] = sub_0094dd6b;
@@ -37046,6 +37053,45 @@ void fntab_reset_unresolved(void) {
     memset(s_unresolved_dispatches, 0, sizeof(s_unresolved_dispatches));
 }
 
+/* SecuROM VM runtime constant evaluator stub (VA 0x010fa200 in section ars)
+ * Evaluates pure descriptor constants and cleans caller stack arguments (ret 8).
+ */
+void sub_010fa200(CPU *c) {
+    uint32_t desc = MR32(c->esp + 4u);
+    uint32_t val = 0;
+    switch (desc) {
+    case 0x019eb2deu: val = 0x00000000u; break;
+    case 0x019eb40du: val = 0x00aa9854u; break;
+    case 0x019eb48eu: val = 0x4ec4ec4fu; break;
+    case 0x019eb66du: val = 0xa13753ebu; break;
+    case 0x019eb7c8u: val = 0x00001349u; break;
+    case 0x019eb94fu: val = 0x0000308au; break;
+    case 0x019eb9a8u: val = 0x00000001u; break;
+    case 0x019ebb0bu: val = 0x00000000u; break;
+    case 0x019ebcc3u: val = 0x00000001u; break;
+    case 0x019ebfd3u: val = 0x0096aa88u; break;
+    case 0x019ec086u: val = 0x00000002u; break;
+    case 0x019ec2bbu: val = 0x20000000u; break;
+    case 0x019ec546u: val = 0x009ee914u; break;
+    case 0x019efaabu: val = 0x00002938u; break;
+    case 0x019efff7u: val = 0x00000000u; break;
+    case 0x019f0149u: val = 0x00000000u; break;
+    case 0x019f022bu: val = 0x000031dcu; break;
+    case 0x019f0255u: val = 0xffff0000u; break;
+    case 0x019f0282u: val = 0x00000001u; break;
+    case 0x019f95d1u: val = 0x00000000u; break;
+    case 0x01a175e8u: val = 0x00000000u; break;
+    case 0x01bcc295u: val = 0x00000000u; break;
+    case 0x01df6099u: val = 0x00000000u; break;
+    default:
+        fprintf(stderr, "[SECUROM VM] Unknown descriptor 0x%08x at 0x010fa200\n", desc);
+        val = 0;
+        break;
+    }
+    c->eax = val;
+    c->esp += 12u;
+}
+
 void dispatch_indirect(struct CPU *c, uint32_t addr) {
     if (c) cpu_trace_record(c, addr);
     uint32_t off = addr - DISPATCH_TEXT_BASE;
@@ -37054,6 +37100,7 @@ void dispatch_indirect(struct CPU *c, uint32_t addr) {
         if (fn) { fn(c); return; }
     }
     switch (addr) {
+    case 0x010fa200u: sub_010fa200(c); return;
     case 0x019b1800u: sub_019b1800(c); return;
     case 0x019cd800u: sub_019cd800(c); return;
     case 0x019ce800u: sub_019ce800(c); return;
